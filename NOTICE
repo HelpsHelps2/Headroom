@@ -1,0 +1,9 @@
+Burrow
+Copyright 2026 Burrow contributors
+
+Licensed under the Apache License, Version 2.0.
+The woodland vector illustration is original project artwork under the same license.
+Uses Apple's platform frameworks and system SQLite. No third-party Swift packages are bundled.
+
+Burrow is a working project name. This local development build has no official
+Developer ID signing identity or public release channel yet.
