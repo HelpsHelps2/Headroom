@@ -1,0 +1,15 @@
+name: Feature request
+description: A build system, worktree location, or workflow Headroom should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution. Which tool creates the folders, and where do they live?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help

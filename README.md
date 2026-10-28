@@ -4,6 +4,12 @@ Headroom finds stale build output across your repositories and agent worktrees a
 
 It is a native Mac menu bar utility with one narrow window: a disk ring, one button, and a review of exactly what will be deleted.
 
+<p align="center">
+  <img src="docs/images/disk.png" width="250" alt="Disk tab: a ring showing stale build output and a Reclaim button">
+  <img src="docs/images/review.png" width="250" alt="Review plan listing each folder to delete, grouped by worktree">
+  <img src="docs/images/worktrees.png" width="250" alt="Worktrees tab: a branch graph with sizes and the reason anything is kept">
+</p>
+
 Downloads: [GitHub Releases](https://github.com/HelpsHelps2/Headroom/releases)
 
 ## Build from source

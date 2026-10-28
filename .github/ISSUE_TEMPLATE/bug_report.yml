@@ -1,0 +1,33 @@
+name: Bug report
+description: Something did not work as described. For anything deleted that should have been kept, use a private security report instead.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If Headroom deleted something it should have kept, please **don't file it here**. Use Security → Report a vulnerability so it can be fixed before details are public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Ideally with a disposable project. Redact personal paths and repository names.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: Headroom 0.2.0, macOS 26.1
+    validations:
+      required: true
+  - type: textarea
+    id: reasons
+    attributes:
+      label: Kept reasons or history entries
+      description: The reason shown in Worktrees or Review, or the History entry, if relevant.
+      render: text

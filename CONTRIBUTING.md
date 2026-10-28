@@ -16,4 +16,4 @@ Describe the resulting behavior, why it is needed, and how it was validated. Con
 
 ## Reporting issues
 
-Include macOS and app versions, relevant protection reasons, and reproduction steps using a disposable project. Redact personal paths and repository names. Do not post source code, tokens, or raw process lists. A private security-reporting destination must be established before a public release; no public vulnerability inbox exists for this local-only repository yet.
+Include macOS and app versions, relevant protection reasons, and reproduction steps using a disposable project. Redact personal paths and repository names. Do not post source code, tokens, or raw process lists. Report anything deleted that should have been kept, or any way around the protections, privately as described in [SECURITY.md](SECURITY.md).
