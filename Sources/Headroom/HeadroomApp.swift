@@ -80,7 +80,7 @@ private struct Screens: View {
                 }
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.9), value: model.tab)
-            if model.demo {
+            if model.demo && !CommandLine.arguments.contains("--snapshot") {
                 Text("DEMO DATA").font(.mono(9, .semibold)).tracking(1).foregroundStyle(theme.dim)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(.top, -21).padding(.trailing, 12)

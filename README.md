@@ -4,9 +4,9 @@ Headroom finds stale build output across your repositories and agent worktrees a
 
 It is a native Mac menu bar utility with one narrow window: a disk ring, one button, and a review of exactly what will be deleted.
 
-This is a local development build. No remote repository or public release has been created.
+Downloads: [GitHub Releases](https://github.com/HelpsHelps2/Headroom/releases)
 
-## Run
+## Build from source
 
 Requires Apple Silicon, macOS 26+, and the currently validated Xcode 27 / Swift 6.4 toolchain.
 
@@ -62,7 +62,7 @@ dist/Headroom.app/Contents/MacOS/headroom-cli clean --yes /absolute/path/node_mo
 
 Protection is observation-based and best effort: a build can start after the final check. Unknown or incomplete observations always keep a folder. Only `node_modules` and Cargo `target` are supported; SwiftPM `.build`, Xcode DerivedData, `.next`, and `dist` are deferred. A brand-new untracked `package.json` is found once something is staged or committed in that worktree.
 
-The app is ad-hoc signed, not Developer ID signed or notarized. Open at login needs the app installed in Applications. The separate authenticated XPC worker described in the architecture is not implemented; the app's engine and the CLI share one core and exclude each other with a file lease.
+Local builds are ad-hoc signed; releases are Developer ID signed and notarized ([Releasing](docs/releasing.md)). Open at login needs the app installed in Applications. The separate authenticated XPC worker described in the architecture is not implemented; the app's engine and the CLI share one core and exclude each other with a file lease.
 
 ## Planning
 
@@ -71,6 +71,7 @@ The app is ad-hoc signed, not Developer ID signed or notarized. Open at login ne
 - [Decision records](docs/decisions/README.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Local validation and remaining limits](docs/validation.md)
+- [Releasing](docs/releasing.md)
 - [Design references](docs/design/utility-round-2.html)
 
 ## License

@@ -2,6 +2,9 @@
 set -euo pipefail
 headroom_root="$(cd "$(dirname "$0")/.." && pwd)"
 headroom_configuration="${1:-debug}"
+headroom_version="$(tr -d '[:space:]' < "$headroom_root/VERSION")"
+headroom_build="$(git -C "$headroom_root" rev-list --count HEAD 2>/dev/null || echo 1)"
+headroom_bundle_id="${HEADROOM_BUNDLE_ID:-io.github.helpshelps2.headroom}"
 export CLANG_MODULE_CACHE_PATH="$headroom_root/.build/module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$headroom_root/.build/module-cache"
 swift build --package-path "$headroom_root" -c "$headroom_configuration"
@@ -23,23 +26,25 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$headroom_iconset" -o "$headroom_app/Contents/Resources/AppIcon.icns"
 
-cat > "$headroom_app/Contents/Info.plist" <<'PLIST'
+cat > "$headroom_app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>Headroom</string>
-<key>CFBundleIdentifier</key><string>local.headroom.development</string>
+<key>CFBundleIdentifier</key><string>$headroom_bundle_id</string>
 <key>CFBundleName</key><string>Headroom</string>
 <key>CFBundleDisplayName</key><string>Headroom</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>$headroom_version</string>
+<key>CFBundleVersion</key><string>$headroom_build</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSHumanReadableCopyright</key><string>Copyright 2026 Headroom contributors. Apache-2.0.</string>
 </dict></plist>
 PLIST
-codesign --force --deep --sign - "$headroom_app"
+# Ad-hoc signature for local runs. scripts/release.sh re-signs with Developer ID.
+codesign --force --sign - "$headroom_app/Contents/MacOS/headroom-cli"
+codesign --force --sign - "$headroom_app"
 printf 'Built %s\n' "$headroom_app"
