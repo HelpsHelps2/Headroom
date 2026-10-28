@@ -1,6 +1,6 @@
 # 0005 Whimsical and accessible experience
 
-Status: accepted.
+Status: accepted; the window layout and character are superseded by [0008](0008-headroom-utility-interface.md).
 
 ## Decision
 

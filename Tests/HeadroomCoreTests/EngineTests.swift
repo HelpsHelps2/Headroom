@@ -1,11 +1,11 @@
 import XCTest
 import Darwin
-@testable import BurrowCore
+@testable import HeadroomCore
 
 final class Fixture {
     let base: URL, project: URL, target: URL, home: URL, state: URL
     init() throws {
-        base = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("burrow-tests-" + UUID().uuidString)
+        base = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("headroom-tests-" + UUID().uuidString)
         project = base.appendingPathComponent("projects/example")
         target = project.appendingPathComponent("target")
         home = base.appendingPathComponent("home")
@@ -18,7 +18,7 @@ final class Fixture {
         try Data(repeating: 1, count: 8192).write(to: target.appendingPathComponent("debug/deps/libexample.rlib"))
         try Data().write(to: target.appendingPathComponent("debug/.cargo-lock"))
         let git = try Command.git(project.path, ["init", "-q"])
-        guard git.status == 0 else { throw BurrowError.message(git.error) }
+        guard git.status == 0 else { throw HeadroomError.message(git.error) }
         try age()
     }
     deinit { try? FileManager.default.removeItem(at: base) }
@@ -214,5 +214,117 @@ final class EngineTests: XCTestCase {
         let snapshot = ActivitySnapshot.capture()
         XCTAssertNil(snapshot.failure, snapshot.failure ?? "")
         XCTAssertNotNil(snapshot.protection(for: f.project.path, target: f.target.path))
+    }
+}
+
+/// An npm project with workspace and `.bin` links and a file hard-linked from a package store.
+final class NodeFixture {
+    let base: URL, project: URL, modules: URL, home: URL, state: URL, source: URL, store: URL
+    init(ignored: Bool = true, lockfile: Bool = true) throws {
+        let fm = FileManager.default
+        base = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("headroom-node-" + UUID().uuidString)
+        project = base.appendingPathComponent("projects/web")
+        modules = project.appendingPathComponent("node_modules")
+        home = base.appendingPathComponent("home"); state = base.appendingPathComponent("state")
+        source = project.appendingPathComponent("packages/shared")
+        store = base.appendingPathComponent("store/blob.js")
+        for dir in [home, source, modules.appendingPathComponent("left-pad"), modules.appendingPathComponent(".bin"), store.deletingLastPathComponent()] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        try Data("{\"name\":\"web\"}".utf8).write(to: project.appendingPathComponent("package.json"))
+        if lockfile { try Data("{}".utf8).write(to: project.appendingPathComponent("package-lock.json")) }
+        if ignored { try Data("node_modules/\n".utf8).write(to: project.appendingPathComponent(".gitignore")) }
+        try Data("export const shared = 1".utf8).write(to: source.appendingPathComponent("index.js"))
+        try Data("{}".utf8).write(to: modules.appendingPathComponent(".package-lock.json"))
+        try Data("{\"name\":\"left-pad\"}".utf8).write(to: modules.appendingPathComponent("left-pad/package.json"))
+        try Data(repeating: 1, count: 8192).write(to: modules.appendingPathComponent("left-pad/index.js"))
+        try Data(repeating: 2, count: 1_048_576).write(to: store)
+        XCTAssertEqual(link(store.path, modules.appendingPathComponent("left-pad/store.js").path), 0)
+        try fm.createSymbolicLink(atPath: modules.appendingPathComponent(".bin/left-pad").path, withDestinationPath: "../left-pad/index.js")
+        try fm.createSymbolicLink(atPath: modules.appendingPathComponent("shared").path, withDestinationPath: source.path)
+        let git = try Command.git(project.path, ["init", "-q"])
+        guard git.status == 0 else { throw HeadroomError.message(git.error) }
+        try age(modules)
+    }
+    deinit { try? FileManager.default.removeItem(at: base) }
+    /// Ages entries without following links, so link destinations keep their own times.
+    func age(_ url: URL) throws {
+        let old = Date().addingTimeInterval(-86400 * 10).timeIntervalSince1970
+        var times = [timeval(tv_sec: Int(old), tv_usec: 0), timeval(tv_sec: Int(old), tv_usec: 0)]
+        var paths = [url.path]
+        if let enumerator = FileManager.default.enumerator(atPath: url.path) {
+            for case let relative as String in enumerator { paths.append(url.path + "/" + relative) }
+        }
+        for path in paths { XCTAssertEqual(lutimes(path, &times), 0) }
+    }
+    func engine() throws -> Engine { try Engine(directory: state, home: home.path, activity: { .init(paths: []) }) }
+    func preferences() -> Preferences { var p = Preferences(); p.roots = [.init(path: project.deletingLastPathComponent().path)]; return p }
+    func scan(_ preferences: Preferences? = nil) throws -> Artifact {
+        let inventory = Scanner(home: home.path).scan(preferences: preferences ?? self.preferences(), activity: .init(paths: []))
+        return try XCTUnwrap(inventory.artifacts.first { $0.kind == .node })
+    }
+}
+
+final class NodeAdapterTests: XCTestCase {
+    func testCleanupRemovesLinksWithoutTouchingDestinations() async throws {
+        let f = try NodeFixture(), engine = try f.engine()
+        try await engine.save(f.preferences())
+        let inventory = try await engine.scan()
+        let item = try XCTUnwrap(inventory.artifacts.first { $0.kind == .node })
+        XCTAssertTrue(item.eligible, item.reasons.joined(separator: " "))
+        XCTAssertEqual(item.relativePath, "node_modules")
+        XCTAssertLessThan(item.bytes, 1_000_000, "Hard-linked store files must not count as reclaimable")
+        let entries = try await engine.execute(try await engine.plan(paths: [item.path]))
+        XCTAssertEqual(entries.first?.outcome, "Cleaned", entries.first?.detail ?? "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.modules.path))
+        XCTAssertEqual(try String(contentsOf: f.source.appendingPathComponent("index.js"), encoding: .utf8), "export const shared = 1")
+        XCTAssertEqual(try Data(contentsOf: f.store).count, 1_048_576)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.project.appendingPathComponent("package.json").path))
+    }
+    func testNotIgnoredByGitIsProtected() throws {
+        let item = try NodeFixture(ignored: false).scan()
+        XCTAssertTrue(item.reasons.contains("node_modules is not ignored by Git."), item.reasons.joined())
+    }
+    func testMissingLockfileIsProtected() throws {
+        let item = try NodeFixture(lockfile: false).scan()
+        XCTAssertTrue(item.reasons.contains(where: { $0.hasPrefix("No lockfile found") }), item.reasons.joined())
+    }
+    func testFolderWithoutPackagesIsProtected() throws {
+        let f = try NodeFixture()
+        for name in try FileManager.default.contentsOfDirectory(atPath: f.modules.path) { try FileManager.default.removeItem(at: f.modules.appendingPathComponent(name)) }
+        try FileManager.default.createDirectory(at: f.modules.appendingPathComponent(".vite/deps"), withIntermediateDirectories: true)
+        try f.age(f.modules)
+        XCTAssertTrue(try f.scan().reasons.contains("No installed packages were found in node_modules."))
+    }
+    func testPinningAWorktreeProtectsNestedProjects() throws {
+        let f = try NodeFixture(); var p = f.preferences(); p.pinned = [f.project.path]
+        XCTAssertTrue(try f.scan(p).reasons.contains("Pinned by you."))
+    }
+    func testActivityNamesTheProcess() throws {
+        let f = try NodeFixture()
+        let snapshot = ActivitySnapshot(uses: [.init(path: f.source.path, pid: 51807, command: "bun")])
+        XCTAssertEqual(snapshot.protection(for: f.project.path, target: f.modules.path), "In use by bun (pid 51807).")
+    }
+    func testRunsAreGroupedAndSpaceIsSampled() async throws {
+        let f = try NodeFixture(), engine = try f.engine()
+        try await engine.save(f.preferences())
+        let scanned = try await engine.scan()
+        let item = try XCTUnwrap(scanned.artifacts.first)
+        let plan = try await engine.plan(paths: [item.path])
+        let seen = Locked<[String]>([])
+        _ = try await engine.execute(plan) { entry in seen.with { $0.append(entry.outcome) } }
+        XCTAssertEqual(seen.with { $0 }, ["Cleaned"])
+        let history = try await engine.history()
+        XCTAssertEqual(history.first?.run, plan.id.uuidString)
+        let samples = try await engine.space(since: .distantPast)
+        XCTAssertFalse(samples.isEmpty)
+    }
+    func testWorktreeInfoNamesRepositoryAndBranch() throws {
+        let f = try NodeFixture()
+        _ = try Command.git(f.project.path, ["checkout", "-q", "-b", "feat/handoff"])
+        let info = try XCTUnwrap(try f.scan().worktree)
+        XCTAssertEqual(info.repository, "web")
+        XCTAssertEqual(info.branch, "feat/handoff")
+        XCTAssertTrue(info.isMain)
     }
 }

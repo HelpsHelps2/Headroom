@@ -1,6 +1,6 @@
 # Contributing
 
-Burrow is a native Mac development-storage tool. Read the product brief and accepted decisions in docs before changing behavior.
+Headroom is a native Mac development-storage tool. Read the product brief and accepted decisions in docs before changing behavior.
 
 ## Develop
 

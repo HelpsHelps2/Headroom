@@ -7,6 +7,7 @@ public actor Engine {
     private let activityProvider: @Sendable () -> ActivitySnapshot
     private let clock: @Sendable () -> Date
     private var inventory = Inventory.empty
+    private let discovery = DiscoveryCache()
 
     public init(directory: URL = Paths.defaultState,
                 home: String = FileManager.default.homeDirectoryForCurrentUser.path,
@@ -22,31 +23,35 @@ public actor Engine {
         try store.save(preferences)
     }
     public func history() throws -> [HistoryEntry] { try store.history() }
-    public func scan() throws -> Inventory {
+    /// Observation times round-trip through SQLite and Date's 2001 epoch, which can shift them by a fraction of a microsecond.
+    static func idle(since: Date, now: Date, hours: Double) -> Bool { now.timeIntervalSince(since) >= hours * 3600 - 0.001 }
+    public func space(since: Date) throws -> [SpaceSample] { try store.space(since: since) }
+    public func scan(progress: Scanner.Progress? = nil) throws -> Inventory {
         let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)
         defer { withExtendedLifetime(lease) {} }
         try store.recoverInterrupted()
         let preferences = try store.preferences(), now = clock()
         try store.pruneObservations(now: now)
-        var result = scanner.scan(preferences: preferences, activity: activityProvider(), now: now)
+        var result = scanner.scan(preferences: preferences, activity: activityProvider(), now: now, progress: progress, discovery: discovery)
         for index in result.artifacts.indices {
             let since = try store.observed(result.artifacts[index], now: now, gapLimit: 600)
             result.artifacts[index].firstObserved = since
         }
         inventory = result
+        try store.recordSpace(.init(date: now, capacity: result.capacity, available: result.available))
         return result
     }
     public func plan(paths: Set<String>, automatic: Bool = false) throws -> CleanupPlan {
         let preferences = try store.preferences(), now = clock()
-        guard now.timeIntervalSince(inventory.scannedAt) < 300 else { throw BurrowError.message("Scan again before preparing cleanup.") }
+        guard now.timeIntervalSince(inventory.scannedAt) < 300 else { throw HeadroomError.message("Scan again before preparing cleanup.") }
         let candidates = inventory.artifacts.filter { artifact in
             guard paths.contains(artifact.path), artifact.eligible else { return false }
             if !automatic { return true }
             return preferences.scheduled && !preferences.paused &&
                 preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic }) &&
-                now.timeIntervalSince(artifact.firstObserved) >= preferences.keepHours * 3600
+                Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours)
         }
-        guard !candidates.isEmpty else { throw BurrowError.message("No selected output is eligible. Protected items stay in place.") }
+        guard !candidates.isEmpty else { throw HeadroomError.message("No selected output is eligible. Protected items stay in place.") }
         return .init(id: UUID(), createdAt: now, candidates: candidates, preferences: preferences, automatic: automatic)
     }
     public func runScheduleIfDue() throws -> [HistoryEntry] {
@@ -66,45 +71,54 @@ public actor Engine {
         guard !paths.isEmpty else { return [] }
         let preferences = try store.preferences(), now = clock()
         let eligible = inventory.artifacts.filter { artifact in
-            paths.contains(artifact.path) && now.timeIntervalSince(artifact.firstObserved) >= preferences.keepHours * 3600 && preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic })
+            paths.contains(artifact.path) && Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours) && preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic })
         }
         guard !eligible.isEmpty else { return [] }
         return try execute(plan(paths: Set(eligible.map(\.path)), automatic: true))
     }
-    public func execute(_ plan: CleanupPlan) throws -> [HistoryEntry] {
+    /// Runs a reviewed plan one folder at a time. Cancelling the calling task stops before the next folder.
+    public func execute(_ plan: CleanupPlan, progress: (@Sendable (HistoryEntry) -> Void)? = nil) throws -> [HistoryEntry] {
         let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)
         defer { withExtendedLifetime(lease) {} }
         let preferences = try store.preferences()
         guard preferences == plan.preferences, clock().timeIntervalSince(plan.createdAt) >= 0,
-              clock().timeIntervalSince(plan.createdAt) < 300 else { throw BurrowError.message("Settings or the review expired. Prepare a new cleanup plan.") }
+              clock().timeIntervalSince(plan.createdAt) < 300 else { throw HeadroomError.message("Settings or the review expired. Prepare a new cleanup plan.") }
         var entries: [HistoryEntry] = []
         for artifact in plan.candidates {
             if Task<Never, Never>.isCancelled { break }
-            var entry = HistoryEntry(id: UUID().uuidString, date: clock(), path: artifact.path, outcome: "Skipped", detail: "", bytes: 0)
+            var entry = HistoryEntry(id: UUID().uuidString, date: clock(), path: artifact.path, outcome: "Skipped", detail: "", bytes: 0,
+                                     run: plan.id.uuidString, automatic: plan.automatic)
             do {
                 guard preferences.roots.contains(where: { $0.path == artifact.root && Paths.contains($0.path, artifact.project) }),
                       URL(fileURLWithPath: artifact.project).resolvingSymlinksInPath().path == artifact.project else {
-                    throw BurrowError.message("Project is outside its approved scan root.")
+                    throw HeadroomError.message("Project is outside its approved scan root.")
                 }
                 // Re-inspect the entire artifact and live activity immediately before deletion.
-                let fresh = try scanner.inspect(project: artifact.project, root: artifact.root, preferences: preferences, activity: activityProvider(), now: clock())
-                guard fresh.eligible else { throw BurrowError.message(fresh.reasons.joined(separator: " ")) }
+                let fresh = try scanner.inspect(kind: artifact.kind, project: artifact.project, root: artifact.root, preferences: preferences, activity: activityProvider(), now: clock())
+                guard fresh.eligible else { throw HeadroomError.message(fresh.reasons.joined(separator: " ")) }
                 guard fresh.identity == artifact.identity, fresh.latestWrite == artifact.latestWrite,
-                      fresh.files == artifact.files, fresh.bytes == artifact.bytes else { throw BurrowError.message("Output changed since review. Scan again.") }
-                let locks = try CargoLocks(target: fresh.path)
+                      fresh.files == artifact.files, fresh.bytes == artifact.bytes else { throw HeadroomError.message("Output changed since review. Scan again.") }
+                let locks = fresh.kind == .cargo ? try CargoLocks(target: fresh.path) : nil
                 defer { withExtendedLifetime(locks) {} }
-                entry.outcome = "Cleaning"; entry.detail = "Permanent removal of verified private Cargo output."
+                entry.outcome = "Cleaning"; entry.detail = "Permanent removal of verified \(fresh.kind.directory) output."
                 try store.record(entry)
                 try ContainedDeletion.remove(fresh)
                 entry.outcome = "Cleaned"; entry.bytes = fresh.bytes
-                entry.detail = "Build output removed. Shared compiler caches were preserved. Rebuilding may be required."
+                entry.detail = fresh.kind == .node
+                    ? "Dependencies removed. Package caches were preserved. Reinstall before the next build."
+                    : "Build output removed. Shared compiler caches were preserved. Rebuilding may be required."
             } catch {
                 entry.outcome = entry.outcome == "Cleaning" ? "Interrupted" : "Skipped"
                 entry.detail = error.localizedDescription
             }
             try store.record(entry); entries.append(entry)
+            progress?(entry)
         }
         inventory = .empty
+        if let space = try? FileManager.default.attributesOfFileSystem(forPath: plan.candidates.first?.project ?? "/") {
+            try? store.recordSpace(.init(date: clock(), capacity: (space[.systemSize] as? NSNumber)?.int64Value ?? 0,
+                                         available: (space[.systemFreeSize] as? NSNumber)?.int64Value ?? 0))
+        }
         return entries
     }
 }

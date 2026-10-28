@@ -43,13 +43,11 @@ Scheduled runs operate on the authorized eligible set for their selected roots. 
 
 ## Experience and personality
 
-Use a normal native Mac window with a searchable project list and a detail inspector. Show storage estimates, activity, protection, candidate reasons, and inspection freshness. An optional menu-bar companion offers status, scan, and pause controls.
-
-Make a whimsical character and environment prominent. Their expression, clutter, space, and palette may change with measured storage pressure and cleanup results. Pressure presentation is independent of cleanup eligibility and schedule decisions.
+A menu bar utility with one narrow window built around a disk ring and a single reclaim action, with Worktrees and History tabs ([0008](decisions/0008-headroom-utility-interface.md)). Show storage estimates, activity, protection, candidate reasons, and inspection freshness. Pressure presentation is independent of cleanup eligibility and schedule decisions.
 
 Controls remain stable. Use literal action labels, readable paths, textual state descriptions, accessible contrast, keyboard navigation, VoiceOver, and Reduce Motion support. Avoid alarming language, deletion scores, or celebrations based on inflated estimated savings. Keep rendering inexpensive while the app is idle or hidden.
 
-Name, character, palette, and illustration style remain open for visual exploration.
+The name is Headroom. Palette and type follow the design references in docs/design.
 
 ## Support and openness
 

@@ -8,21 +8,29 @@ final class StateStore {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path, &db,
                              SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
-            throw BurrowError.message("Could not open the local inventory database.")
+            throw HeadroomError.message("Could not open the local inventory database.")
         }
         sqlite3_busy_timeout(db, 5000)
         try execute("PRAGMA journal_mode=WAL")
-        guard Int(try scalar("PRAGMA user_version") ?? "0") ?? 0 <= 1 else { throw BurrowError.message("Unsupported database version.") }
+        let version = Int(try scalar("PRAGMA user_version") ?? "0") ?? 0
+        guard version <= 2 else { throw HeadroomError.message("Unsupported database version.") }
         try execute("CREATE TABLE IF NOT EXISTS settings (id TEXT PRIMARY KEY, value TEXT NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS observation (path TEXT PRIMARY KEY, identity TEXT NOT NULL, since REAL NOT NULL, seen REAL NOT NULL, changed REAL NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS history (id TEXT PRIMARY KEY, date REAL NOT NULL, path TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL, bytes INTEGER NOT NULL)")
-        try execute("PRAGMA user_version=1")
+        if version < 2 {
+            try execute("BEGIN")
+            try execute("ALTER TABLE history ADD COLUMN run TEXT NOT NULL DEFAULT ''")
+            try execute("ALTER TABLE history ADD COLUMN automatic INTEGER NOT NULL DEFAULT 0")
+            try execute("CREATE TABLE IF NOT EXISTS space (date REAL PRIMARY KEY, capacity INTEGER NOT NULL, available INTEGER NOT NULL)")
+            try execute("PRAGMA user_version=2")
+            try execute("COMMIT")
+        }
     }
     deinit { sqlite3_close(db) }
     private func execute(_ sql: String) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw error() }
     }
-    private func error() -> BurrowError { .message("Local database: \(String(cString: sqlite3_errmsg(db)))") }
+    private func error() -> HeadroomError { .message("Local database: \(String(cString: sqlite3_errmsg(db)))") }
     private func statement(_ sql: String, _ values: [String]) throws -> OpaquePointer {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { throw error() }
@@ -47,7 +55,7 @@ final class StateStore {
     func save(_ preferences: Preferences) throws {
         guard preferences.keepHours >= 1, preferences.keepHours <= 8760,
               preferences.intervalHours >= 1, preferences.intervalHours <= 720 else {
-            throw BurrowError.message("Choose inactivity of 1–8760 hours and a schedule of 1–720 hours.")
+            throw HeadroomError.message("Choose inactivity of 1–8760 hours and a schedule of 1–720 hours.")
         }
         let data = try JSONEncoder().encode(preferences)
         try update("INSERT OR REPLACE INTO settings VALUES ('preferences',?)", [String(decoding: data, as: UTF8.self)])
@@ -73,16 +81,33 @@ final class StateStore {
         return since
     }
     func record(_ entry: HistoryEntry) throws {
-        try update("INSERT OR REPLACE INTO history VALUES (?,?,?,?,?,?)", [entry.id, "\(entry.date.timeIntervalSince1970)", entry.path, entry.outcome, entry.detail, "\(entry.bytes)"])
+        try update("INSERT OR REPLACE INTO history (id,date,path,outcome,detail,bytes,run,automatic) VALUES (?,?,?,?,?,?,?,?)",
+                   [entry.id, "\(entry.date.timeIntervalSince1970)", entry.path, entry.outcome, entry.detail, "\(entry.bytes)", entry.run, entry.automatic ? "1" : "0"])
         try execute("DELETE FROM history WHERE id IN (SELECT id FROM history ORDER BY date DESC LIMIT -1 OFFSET 1000)")
     }
     func history() throws -> [HistoryEntry] {
-        let stmt = try statement("SELECT id,date,path,outcome,detail,bytes FROM history ORDER BY date DESC LIMIT 200", [])
+        let stmt = try statement("SELECT id,date,path,outcome,detail,bytes,run,automatic FROM history ORDER BY date DESC LIMIT 1000", [])
         defer { sqlite3_finalize(stmt) }
         var result: [HistoryEntry] = []
         func str(_ index: Int32) -> String { String(cString: sqlite3_column_text(stmt, index)) }
         while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(.init(id: str(0), date: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)), path: str(2), outcome: str(3), detail: str(4), bytes: sqlite3_column_int64(stmt, 5)))
+            let run = str(6)
+            result.append(.init(id: str(0), date: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)), path: str(2), outcome: str(3), detail: str(4),
+                                bytes: sqlite3_column_int64(stmt, 5), run: run.isEmpty ? str(0) : run, automatic: sqlite3_column_int(stmt, 7) != 0))
+        }
+        return result
+    }
+    func recordSpace(_ sample: SpaceSample) throws {
+        guard sample.capacity > 0 else { return }
+        try update("INSERT OR REPLACE INTO space VALUES (?,?,?)", ["\(sample.date.timeIntervalSince1970)", "\(sample.capacity)", "\(sample.available)"])
+        try update("DELETE FROM space WHERE date < ?", ["\(sample.date.addingTimeInterval(-120 * 86400).timeIntervalSince1970)"])
+    }
+    func space(since: Date) throws -> [SpaceSample] {
+        let stmt = try statement("SELECT date,capacity,available FROM space WHERE date >= ? ORDER BY date", ["\(since.timeIntervalSince1970)"])
+        defer { sqlite3_finalize(stmt) }
+        var result: [SpaceSample] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(.init(date: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0)), capacity: sqlite3_column_int64(stmt, 1), available: sqlite3_column_int64(stmt, 2)))
         }
         return result
     }

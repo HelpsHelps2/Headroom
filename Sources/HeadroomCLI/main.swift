@@ -1,17 +1,20 @@
 import Foundation
-import BurrowCore
+import HeadroomCore
 
 @main
-struct BurrowWorker {
+struct HeadroomCLI {
+    static let usage = """
+    headroom-cli scan [folder ...] | history | clean --yes /absolute/project/node_modules ...
+    Read-only by default. Uses the same protections and state as the Mac app.
+    Set HEADROOM_STATE_DIR to use a separate inventory database.
+    """
+
     static func main() async {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
-            guard let command = args.first, ["scan", "history", "clean"].contains(command) else {
-                print("burrow-worker scan [folder ...] | history | clean /absolute/project/target --yes\nRead-only by default. Uses the same protections and state as the Mac app.")
-                return
-            }
+            guard let command = args.first, ["scan", "history", "clean"].contains(command) else { print(usage); return }
             let engine = try Engine()
-            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
             if command == "history" {
                 print(String(decoding: try encoder.encode(await engine.history()), as: UTF8.self)); return
             }
@@ -22,10 +25,11 @@ struct BurrowWorker {
             }
             let inventory = try await engine.scan()
             if command == "scan" { print(String(decoding: try encoder.encode(inventory), as: UTF8.self)); return }
-            guard args.count == 3, args[2] == "--yes", args[1].hasPrefix("/") else {
-                throw BurrowError.message("Permanent deletion requires: clean /absolute/project/target --yes. Add its scan root in the app first.")
+            let paths = args.dropFirst().filter { $0 != "--yes" }
+            guard args.contains("--yes"), !paths.isEmpty, paths.allSatisfy({ $0.hasPrefix("/") }) else {
+                throw HeadroomError.message("Permanent deletion requires: clean --yes /absolute/path ... Add its scan root in the app first.")
             }
-            let plan = try await engine.plan(paths: [args[1]])
+            let plan = try await engine.plan(paths: Set(paths))
             print(String(decoding: try encoder.encode(await engine.execute(plan)), as: UTF8.self))
         } catch {
             FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))

@@ -2,19 +2,20 @@
 import PackageDescription
 
 let package = Package(
-    name: "Burrow",
+    name: "Headroom",
     platforms: [.macOS("26.0")],
     products: [
-        .library(name: "BurrowCore", targets: ["BurrowCore"]),
-        .executable(name: "Burrow", targets: ["Burrow"]),
-        .executable(name: "burrow-worker", targets: ["BurrowWorker"])
+        .library(name: "HeadroomCore", targets: ["HeadroomCore"]),
+        .executable(name: "Headroom", targets: ["Headroom"]),
+        // Distinct from the app binary: macOS volumes are usually case-insensitive.
+        .executable(name: "headroom-cli", targets: ["HeadroomCLI"])
     ],
     targets: [
         .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
-        .target(name: "BurrowCore", dependencies: ["CSQLite"]),
-        .executableTarget(name: "Burrow", dependencies: ["BurrowCore"]),
-        .executableTarget(name: "BurrowWorker", dependencies: ["BurrowCore"]),
-        .testTarget(name: "BurrowCoreTests", dependencies: ["BurrowCore"])
+        .target(name: "HeadroomCore", dependencies: ["CSQLite"]),
+        .executableTarget(name: "Headroom", dependencies: ["HeadroomCore"]),
+        .executableTarget(name: "HeadroomCLI", dependencies: ["HeadroomCore"]),
+        .testTarget(name: "HeadroomCoreTests", dependencies: ["HeadroomCore"])
     ],
     swiftLanguageModes: [.v5]
 )
