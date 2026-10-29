@@ -48,7 +48,7 @@ enum Reason {
             ("Shared compiler", "shared cache"), ("Cargo output configuration", "custom Cargo target-dir"),
         ]
         if let match = table.first(where: { reason.hasPrefix($0.0) }) { return match.1 }
-        if reason.hasPrefix("Output was written within the last ") {
+        if reason.hasPrefix(Artifact.recentReason) {
             return "built in the last " + reason.dropFirst(35).replacingOccurrences(of: " hours.", with: " h")
         }
         if reason.hasPrefix("Unexpected items in target: ") { return "contains " + reason.dropFirst(28).dropLast() }

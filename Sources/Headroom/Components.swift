@@ -39,6 +39,28 @@ struct IconButton: View {
     }
 }
 
+/// Scan now. The arrow spins in the accent color while any scan runs, including scheduled ones.
+struct ScanButton: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.theme) private var theme
+    var body: some View {
+        let scanning = model.scanning
+        Button { Task { await model.scan() } } label: {
+            TimelineView(.animation(paused: !scanning)) { context in
+                Image(systemName: "arrow.clockwise").font(.sans(13, .medium))
+                    .rotationEffect(.degrees(scanning ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360 : 0))
+            }
+            .frame(width: 24, height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle())
+        .foregroundStyle(scanning ? theme.accent : theme.muted)
+        .allowsHitTesting(!scanning && !model.demo && !model.preferences.roots.isEmpty)
+        .keyboardShortcut("r", modifiers: .command)
+        .help(scanning ? (model.scanProgress.total > 0 ? "Scanning \(model.scanProgress.done) of \(model.scanProgress.total)" : "Scanning") : "Scan now")
+        .accessibilityLabel(scanning ? "Scanning" : "Scan now")
+    }
+}
+
 struct PressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

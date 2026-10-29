@@ -162,7 +162,7 @@ public struct Scanner: Sendable {
         catch { reasons.append(error.localizedDescription) }
         if preferences.isPinned(project) { reasons.append("Pinned by you.") }
         if let reason = activity.protection(for: project, target: target) { reasons.append(reason) }
-        if measurement.latestWrite > now.addingTimeInterval(-preferences.keepHours * 3600) { reasons.append("Output was written within the last \(Int(preferences.keepHours)) hours.") }
+        if measurement.latestWrite > now.addingTimeInterval(-preferences.keepHours * 3600) { reasons.append(Artifact.recentReason + "\(Int(preferences.keepHours)) hours.") }
         if protectedCaches.contains(where: { Paths.contains($0, target) || Paths.contains(target, $0) }) { reasons.append("Shared compiler or package cache is protected.") }
         if URL(fileURLWithPath: project).resolvingSymlinksInPath().path != project { reasons.append("Project path contains a symbolic link.") }
         switch kind {

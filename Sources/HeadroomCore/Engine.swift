@@ -41,18 +41,21 @@ public actor Engine {
         try store.recordSpace(.init(date: now, capacity: result.capacity, available: result.available))
         return result
     }
-    public func plan(paths: Set<String>, automatic: Bool = false) throws -> CleanupPlan {
+    /// `skippingWait` lets a person remove chosen output before the keep window ends. Automatic cleanup never skips it.
+    public func plan(paths: Set<String>, skippingWait: Set<String> = [], automatic: Bool = false) throws -> CleanupPlan {
         let preferences = try store.preferences(), now = clock()
         guard now.timeIntervalSince(inventory.scannedAt) < 300 else { throw HeadroomError.message("Scan again before preparing cleanup.") }
+        let skipping = automatic ? [] : skippingWait.intersection(paths)
         let candidates = inventory.artifacts.filter { artifact in
-            guard paths.contains(artifact.path), artifact.eligible else { return false }
+            guard paths.contains(artifact.path), artifact.eligible(skippingWait: skipping.contains(artifact.path)) else { return false }
             if !automatic { return true }
             return preferences.scheduled && !preferences.paused &&
                 preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic }) &&
                 Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours)
         }
         guard !candidates.isEmpty else { throw HeadroomError.message("No selected output is eligible. Protected items stay in place.") }
-        return .init(id: UUID(), createdAt: now, candidates: candidates, preferences: preferences, automatic: automatic)
+        return .init(id: UUID(), createdAt: now, candidates: candidates, preferences: preferences, automatic: automatic,
+                     skippingWait: skipping.intersection(candidates.map(\.path)))
     }
     public func runScheduleIfDue() throws -> [HistoryEntry] {
         let preferences = try store.preferences()
@@ -95,7 +98,7 @@ public actor Engine {
                 }
                 // Re-inspect the entire artifact and live activity immediately before deletion.
                 let fresh = try scanner.inspect(kind: artifact.kind, project: artifact.project, root: artifact.root, preferences: preferences, activity: activityProvider(), now: clock())
-                guard fresh.eligible else { throw HeadroomError.message(fresh.reasons.joined(separator: " ")) }
+                guard fresh.eligible(skippingWait: plan.skippingWait.contains(fresh.path)) else { throw HeadroomError.message(fresh.reasons.joined(separator: " ")) }
                 guard fresh.identity == artifact.identity, fresh.latestWrite == artifact.latestWrite,
                       fresh.files == artifact.files, fresh.bytes == artifact.bytes else { throw HeadroomError.message("Output changed since review. Scan again.") }
                 let locks = fresh.kind == .cargo ? try CargoLocks(target: fresh.path) : nil
@@ -107,6 +110,7 @@ public actor Engine {
                 entry.detail = fresh.kind == .node
                     ? "Dependencies removed. Package caches were preserved. Reinstall before the next build."
                     : "Build output removed. Shared compiler caches were preserved. Rebuilding may be required."
+                if !fresh.eligible { entry.detail += " Removed before the keep window ended, as you chose." }
             } catch {
                 entry.outcome = entry.outcome == "Cleaning" ? "Interrupted" : "Skipped"
                 entry.detail = error.localizedDescription

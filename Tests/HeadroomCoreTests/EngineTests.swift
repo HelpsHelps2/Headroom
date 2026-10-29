@@ -128,6 +128,42 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(result.first?.outcome, "Skipped")
         XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
     }
+    func testRecentOutputNeedsAnExplicitSkip() async throws {
+        let f = try Fixture(), engine = try f.engine()
+        try Data("fresh".utf8).write(to: f.target.appendingPathComponent("debug/deps/fresh.rlib"))
+        try await engine.save(f.preferences())
+        let scanned = try await engine.scan().artifacts.first
+        let artifact = try XCTUnwrap(scanned)
+        XCTAssertFalse(artifact.eligible)
+        XCTAssertTrue(artifact.waiting, artifact.reasons.joined())
+        do { _ = try await engine.plan(paths: [f.target.path]); XCTFail("Recent output stays without a skip") } catch {}
+        do { _ = try await engine.plan(paths: [f.target.path], skippingWait: [f.target.path], automatic: true); XCTFail("Automatic cleanup never skips the wait") } catch {}
+        let plan = try await engine.plan(paths: [f.target.path], skippingWait: [f.target.path])
+        let result = try await engine.execute(plan)
+        XCTAssertEqual(result.first?.outcome, "Cleaned", result.first?.detail ?? "")
+        XCTAssertTrue(result.first?.detail.contains("before the keep window") ?? false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testSkippingTheWaitNeverOverridesActivity() async throws {
+        let f = try Fixture(), engine = try f.engine(activity: .init(paths: [f.project.path]))
+        try Data("fresh".utf8).write(to: f.target.appendingPathComponent("debug/deps/fresh.rlib"))
+        try await engine.save(f.preferences())
+        let scanned = try await engine.scan().artifacts.first
+        let artifact = try XCTUnwrap(scanned)
+        XCTAssertFalse(artifact.waiting, "In-use output is not merely waiting")
+        do { _ = try await engine.plan(paths: [f.target.path], skippingWait: [f.target.path]); XCTFail("In-use output stays") } catch {}
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testWritesAfterReviewStopASkippedWait() async throws {
+        let f = try Fixture(), engine = try f.engine()
+        try Data("fresh".utf8).write(to: f.target.appendingPathComponent("debug/deps/fresh.rlib"))
+        try await engine.save(f.preferences()); _ = try await engine.scan()
+        let plan = try await engine.plan(paths: [f.target.path], skippingWait: [f.target.path])
+        try Data("still building".utf8).write(to: f.target.appendingPathComponent("debug/deps/next.rlib"))
+        let result = try await engine.execute(plan)
+        XCTAssertEqual(result.first?.outcome, "Skipped")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+    }
     func testPolicyChangesInvalidatePlan() async throws {
         let f = try Fixture(), engine = try f.engine()
         var p = f.preferences(); try await engine.save(p); _ = try await engine.scan()

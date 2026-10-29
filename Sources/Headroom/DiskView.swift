@@ -9,7 +9,7 @@ struct DiskView: View {
         @Bindable var model = model
         VStack(spacing: 0) {
             TopBar {
-                Color.clear.frame(width: 24)
+                ScanButton()
             } title: { Brand() } trailing: {
                 IconButton(symbol: "gearshape", help: "Settings") { model.screen = .settings }
                     .keyboardShortcut(",", modifiers: .command)
@@ -20,11 +20,12 @@ struct DiskView: View {
                 Text(freeLine).font(.mono(12.5)).foregroundStyle(theme.muted).monospacedDigit()
             }
             .padding(.top, firstLaunch ? 16 : 24)
-            DiskRing(capacity: model.inventory.capacity, available: model.inventory.available, highlight: model.reclaimable, size: firstLaunch ? 212 : 250) {
+            DiskRing(capacity: model.inventory.capacity, available: model.inventory.available, highlight: onlyRecent ? model.recentBytes : model.reclaimable, size: firstLaunch ? 212 : 250) {
                 Button(action: coreAction) { CoreDisc(size: firstLaunch ? 132 : 156) { core } }
                     .buttonStyle(PressStyle())
-                    .disabled(model.hasScanned && model.eligible.isEmpty && !model.preferences.roots.isEmpty)
-                    .accessibilityLabel(model.preferences.roots.isEmpty ? (model.chosenSuggestions.isEmpty ? "Add folder" : "Watch \(model.chosenSuggestions.count) folders") : "Reclaim \(Format.bytes(model.reclaimable))")
+                    .disabled(model.hasScanned && model.eligible.isEmpty && model.recent.isEmpty && !model.preferences.roots.isEmpty)
+                    .accessibilityLabel(model.preferences.roots.isEmpty ? (model.chosenSuggestions.isEmpty ? "Add folder" : "Watch \(model.chosenSuggestions.count) folders")
+                                        : onlyRecent ? "Clean \(Format.bytes(model.recentBytes)) now" : "Reclaim \(Format.bytes(model.reclaimable))")
             }
             .padding(.top, firstLaunch ? 8 : 14)
             if firstLaunch {
@@ -32,6 +33,7 @@ struct DiskView: View {
                 Spacer(minLength: 0)
             } else {
                 planRow.padding(.horizontal, 14).padding(.top, 22)
+                if !model.eligible.isEmpty && !model.recent.isEmpty { cleanEverything.padding(.horizontal, 14).padding(.top, 6) }
                 scopeRow.padding(.horizontal, 14).padding(.top, 8)
                 Spacer(minLength: 0)
                 footer
@@ -40,6 +42,21 @@ struct DiskView: View {
     }
 
     private var firstLaunch: Bool { model.preferences.roots.isEmpty }
+    /// Nothing is stale, but recent builds could go now.
+    private var onlyRecent: Bool { model.hasScanned && model.eligible.isEmpty && !model.recent.isEmpty }
+
+    private var cleanEverything: some View {
+        Button { model.cleanNow() } label: {
+            HStack(spacing: 4) {
+                Text("Clean now, including \(Format.bytes(model.recentBytes)) built recently")
+                Image(systemName: "chevron.right").font(.sans(8.5, .bold))
+            }
+            .font(.sans(11.5, .medium)).foregroundStyle(theme.accent)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 2).frame(height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle())
+        .help("Review stale folders together with folders built in the last \(Format.hours(model.preferences.keepHours))")
+    }
 
     private var freeLine: String {
         if model.preferences.roots.isEmpty {
@@ -56,6 +73,7 @@ struct DiskView: View {
             if model.chosenSuggestions.isEmpty { model.addFolder() } else { model.watchChosenSuggestions() }
         }
         else if !model.eligible.isEmpty { model.openReview(model.visible) }
+        else if !model.recent.isEmpty { model.cleanNow() }
     }
 
     @ViewBuilder private var core: some View {
@@ -79,9 +97,9 @@ struct DiskView: View {
         } else {
             VStack(spacing: 4) {
                 Image(systemName: "arrow.down.to.line").font(.sans(17, .regular)).foregroundStyle(theme.ink.opacity(0.7))
-                BigBytes(bytes: model.reclaimable)
-                Text(model.eligible.isEmpty ? "NOTHING STALE" : "RECLAIM").font(.mono(10, .semibold)).tracking(1.4)
-                    .foregroundStyle(model.eligible.isEmpty ? theme.dim : theme.accent).padding(.top, 3)
+                BigBytes(bytes: onlyRecent ? model.recentBytes : model.reclaimable)
+                Text(onlyRecent ? "CLEAN NOW" : model.eligible.isEmpty ? "NOTHING STALE" : "RECLAIM").font(.mono(10, .semibold)).tracking(1.4)
+                    .foregroundStyle(model.eligible.isEmpty && !onlyRecent ? theme.dim : theme.accent).padding(.top, 3)
             }
         }
     }
@@ -91,6 +109,10 @@ struct DiskView: View {
         let (title, detail, link): (String, String, String?) = {
             if model.preferences.roots.isEmpty { return ("Nothing is deleted unreviewed", "Finds node_modules and Cargo target folders", nil) }
             if !model.hasScanned { return ("Inspecting build output", "Checking processes, locks, and Git state", nil) }
+            if onlyRecent {
+                let trees = model.groups.filter(\.waiting).count
+                return ("\(trees) \(trees == 1 ? "worktree" : "worktrees") built recently", "Skips the \(Format.hours(model.preferences.keepHours)) wait", "Clean now")
+            }
             if model.eligible.isEmpty {
                 return ("Nothing idle long enough", "\(model.kept.count) folders kept · \(Format.hours(model.preferences.keepHours)) grace period", model.kept.isEmpty ? nil : "Why")
             }
@@ -99,6 +121,7 @@ struct DiskView: View {
         }()
         return Button {
             if !model.eligible.isEmpty { model.openReview(model.visible) }
+            else if onlyRecent { model.cleanNow() }
             else if !model.kept.isEmpty { model.worktreeFilter = .kept; model.tab = .worktrees }
         } label: {
             Card {

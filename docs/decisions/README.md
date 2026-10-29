@@ -10,5 +10,6 @@ The following decisions were accepted through the architecture interview on Octo
 - [0006 Open-source distribution and maintenance](0006-open-source-distribution-and-maintenance.md)
 - [0007 Node dependency adapter and Git-guided discovery](0007-node-dependency-adapter.md)
 - [0008 Headroom utility interface](0008-headroom-utility-interface.md)
+- [0009 Choosing to remove recent output](0009-choosing-recent-output.md)
 
 Change accepted decisions through a new record explaining the reason, consequences, and migration. Preserve superseded records so contributors can understand earlier constraints.

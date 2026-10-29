@@ -127,6 +127,12 @@ struct MenuContent: View {
             Text(model.preferences.roots.isEmpty ? "No folders watched" : model.scanning ? "Scanning…" : "Not scanned yet")
         }
         Button("Open Headroom") { openWindow(id: "main"); NSApp.activate() }.keyboardShortcut("o")
+        if model.hasScanned && !(model.eligible.isEmpty && model.recent.isEmpty) {
+            Button("Clean Now… \(Format.bytes(model.reclaimable + model.recentBytes))") {
+                model.screen = .main; model.cleanNow(); openWindow(id: "main"); NSApp.activate()
+            }
+            .disabled(model.sweep != nil)
+        }
         Button("Scan Now") { Task { await model.scan() } }
             .disabled(model.scanning || model.demo || model.preferences.roots.isEmpty)
         if model.preferences.scheduled {
@@ -199,21 +205,30 @@ enum Snapshots {
         try? await Task.sleep(for: .seconds(1.5))
         // Real inventories are captured read-only: the sweep steps only run against demo data.
         while !model.demo && (model.scanning || !model.hasScanned) && !model.preferences.roots.isEmpty { try? await Task.sleep(for: .seconds(1)) }
+        var full: Inventory?
         for appearance in ["dark", "light"] {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
             let steps: [(String, Double, () -> Void)] = [
                 ("1-disk", 0.8, { model.screen = .main; model.tab = .disk }),
-                ("2-worktrees", 0.8, { if model.demo { model.repository = "t3code" }; model.worktreeFilter = .all; model.tab = .worktrees }),
+                ("1-recent-only", 0.8, { full = model.inventory; model.inventory.artifacts.removeAll(where: \.eligible) }),
+                ("2-worktrees", 0.8, { if let full { model.inventory = full }; model.repository = nil; model.worktreeFilter = .all; model.tab = .worktrees }),
+                ("2-selected", 0.8, {
+                    model.repository = "t3code"
+                    model.selected = Set(model.repositoryGroups.filter { $0.waiting || $0.name == "spike/sqlite-wal" }.map(\.top))
+                }),
+                ("2-review-selected", 0.9, { model.reviewSelection() }),
+                ("2-scanning", 0.5, { model.screen = .main; model.selected = []; model.repository = nil; model.scanning = true }),
                 ("3-history", 0.8, { model.tab = .history }),
                 ("4-review", 0.9, { model.tab = .disk; model.openReview(model.visible); if model.demo { model.toggleExcluded(model.review[2]) } }),
                 ("5-sweep", 3.2, { model.startSweep() }),
                 ("6-done", 0.8, { model.stopSweep() }),
                 ("7-settings", 0.9, { model.sweep = nil; model.screen = .settings }),
             ]
-            for (name, wait, apply) in steps where model.demo || !["5-sweep", "6-done"].contains(name) {
+            for (name, wait, apply) in steps where model.demo || !["1-recent-only", "2-selected", "2-review-selected", "2-scanning", "5-sweep", "6-done"].contains(name) {
                 apply()
                 try? await Task.sleep(for: .seconds(wait))
                 capture(to: "\(directory)/\(name)-\(appearance).png")
+                if name == "2-scanning" { model.scanning = false }
             }
             model.screen = .main
         }

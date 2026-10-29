@@ -35,7 +35,7 @@ Demo mode uses labeled example data and simulates cleanup without deleting anyth
 
 A folder is eligible only when every check passes. Otherwise it is kept and the interface says why.
 
-- **Shared rules:** inside a Git worktree under a watched folder; not written for 24 hours (configurable); no process has an open file or working directory in the worktree; not pinned; worktree not locked; nothing inside is tracked by Git; no symbolic link in its path; on the same volume. Everything is checked again immediately before deletion, and the folder's identity, size, and file count must match the review.
+- **Shared rules:** inside a Git worktree under a watched folder; not written for 24 hours (configurable, and you can skip it for worktrees you select); no process has an open file or working directory in the worktree; not pinned; worktree not locked; nothing inside is tracked by Git; no symbolic link in its path; on the same volume. Everything is checked again immediately before deletion, and the folder's identity, size, and file count must match the review.
 - **`node_modules`:** beside a `package.json`, with a lockfile in the project or above it in the same worktree, ignored by Git, and containing an actual install. Symbolic links inside are removed, never followed, so workspace packages and `.bin` targets survive. Hard-linked store files are not counted as reclaimable.
 - **Cargo `target`:** a standard private layout (`debug`, `release`, `tmp`, `rust-analyzer`) with Cargo build evidence, no output redirection in Cargo configuration or environment, and no held Cargo build lock. Anything else inside, such as a Postgres `pgdata` directory, keeps the folder.
 
@@ -43,9 +43,10 @@ Never touched: `~/.cargo`, sccache, `~/.npm`, `~/.bun`, pnpm and Yarn stores, an
 
 ## Using it
 
-- **Disk:** the ring is your disk. Amber is stale build output. The center button opens the review.
+- **Scanning:** the arrow at the top left spins while Headroom scans. Click it, or press ⌘R, to scan now.
+- **Disk:** the ring is your disk. Amber is stale build output. The center button opens the review. **Clean now** (on the Disk screen and in the menu bar menu) reviews stale output together with output built in the last 24 hours, for when you need the space today.
 - **Review:** a diff of the plan grouped by worktree. Click a line to exclude it. The terminal button copies the plan as a `headroom-cli` command.
-- **Worktrees:** each repository's worktrees as a branch graph. Kept rows show the reason, for example `in use by bun · pid 51807`. Right-click a row to always keep it or reveal it in Finder.
+- **Worktrees:** every repository's worktrees as branch graphs. Check worktrees to review just those; Shift-click selects a range. Stale rows and rows only waiting out the 24 hours can be checked, and checking a waiting row removes it now. Other kept rows are locked and show the reason, for example `in use by bun · pid 51807`. Right-click a row to quit the process holding it, always keep it, or reveal it in Finder.
 - **Sweeping:** folders are removed one at a time. A folder that becomes active mid-run is skipped. **Stop after this folder** stops between folders.
 - **History:** space reclaimed this month, free space over 14 days, and every run with what it skipped.
 - **Automatic cleanup:** off by default. Turning it on asks for confirmation, then deletes eligible folders every 24 hours (configurable) without a review, in watched folders marked automatic. It requires continuous observations no more than ten minutes apart, so Headroom rescans every five minutes while it is on, at background priority; otherwise it rescans every 30 minutes and when you open the window.

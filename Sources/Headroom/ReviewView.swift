@@ -38,6 +38,12 @@ struct ReviewView: View {
         }
     }
 
+    private var earlyNote: String {
+        let early = model.reviewIncluded.filter { model.reviewSkippingWait.contains($0.path) }.count
+        guard early > 0 else { return "" }
+        return "\(early) \(early == 1 ? "folder was" : "folders were") built in the last \(Format.hours(model.preferences.keepHours)) and \(early == 1 ? "goes" : "go") now because you chose \(early == 1 ? "it" : "them"). "
+    }
+
     private var sheet: some View {
         VStack(spacing: 0) {
             Capsule().fill(theme.line).frame(width: 34, height: 4).padding(.top, 7)
@@ -68,7 +74,7 @@ struct ReviewView: View {
             .mask(LinearGradient(stops: [.init(color: .black, location: 0.88), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "checkmark.shield").font(.sans(12)).foregroundStyle(theme.accent)
-                Text("Each folder is checked again for open files and running builds just before it is deleted. Deletion is permanent.")
+                Text(earlyNote + "Each folder is checked again for open files and running builds just before it is deleted. Deletion is permanent.")
                     .font(.sans(11)).foregroundStyle(theme.muted).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -139,7 +145,8 @@ struct ReviewView: View {
             let excluded = model.excluded.contains(artifact.path)
             Button { withAnimation(.easeOut(duration: 0.15)) { model.toggleExcluded(artifact) } } label: {
                 row(sign: "-", excluded ? artifact.relativePath + " excluded" : artifact.relativePath, artifact.bytes,
-                    color: excluded ? theme.dim : theme.ink, strike: excluded)
+                    color: excluded ? theme.dim : theme.ink, strike: excluded,
+                    tag: model.reviewSkippingWait.contains(artifact.path) && !excluded ? "built recently" : nil)
                     .background(excluded ? .clear : theme.accentSoft)
                     .contentShape(Rectangle())
             }
@@ -148,10 +155,11 @@ struct ReviewView: View {
         }
     }
 
-    private func row(sign: String, _ text: String, _ bytes: Int64, color: Color, strike: Bool = false) -> some View {
+    private func row(sign: String, _ text: String, _ bytes: Int64, color: Color, strike: Bool = false, tag: String? = nil) -> some View {
         HStack(spacing: 0) {
             Text(sign).fontWeight(.semibold).foregroundStyle(sign == "-" && !strike ? theme.accent : color).frame(width: 14, alignment: .leading)
             Text(text).lineLimit(1).truncationMode(.middle).strikethrough(strike, color: theme.dim)
+            if let tag { Text("  " + tag).foregroundStyle(theme.accent).lineLimit(1).fixedSize() }
             Spacer(minLength: 8)
             Text(Format.bytes(bytes)).strikethrough(strike, color: theme.dim).monospacedDigit()
         }

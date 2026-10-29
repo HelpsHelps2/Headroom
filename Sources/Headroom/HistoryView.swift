@@ -16,7 +16,7 @@ struct HistoryView: View {
         @Bindable var model = model
         let month = monthRuns
         VStack(spacing: 0) {
-            TopBar { Color.clear.frame(width: 24) } title: { Brand() } trailing: { Color.clear.frame(width: 24) }
+            TopBar { ScanButton() } title: { Brand() } trailing: { Color.clear.frame(width: 24) }
             Tabs(selection: $model.tab)
             VStack(alignment: .leading, spacing: 0) {
                 SectionLabel(text: "Reclaimed in " + Date().formatted(.dateTime.month(.wide)))

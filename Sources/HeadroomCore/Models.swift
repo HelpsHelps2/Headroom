@@ -65,6 +65,11 @@ public struct Artifact: Codable, Identifiable, Equatable, Sendable {
     public var firstObserved: Date
     public var worktree: WorktreeInfo?
     public var eligible: Bool { reasons.isEmpty }
+    /// Prefix of the one protection that only reflects the keep-hours wait.
+    public static let recentReason = "Output was written within the last "
+    /// Kept only because it was written within the keep window. A person can choose to remove it now; nothing else can.
+    public var waiting: Bool { !reasons.isEmpty && reasons.allSatisfy { $0.hasPrefix(Self.recentReason) } }
+    public func eligible(skippingWait: Bool) -> Bool { eligible || (skippingWait && waiting) }
     public var name: String { URL(fileURLWithPath: project).lastPathComponent }
     /// Output path relative to its worktree, e.g. `packages/web/node_modules`.
     public var relativePath: String {
@@ -99,6 +104,8 @@ public struct CleanupPlan: Codable, Sendable {
     public let candidates: [Artifact]
     public let preferences: Preferences
     public let automatic: Bool
+    /// Paths a person chose to remove before the keep window ends. Every other protection still applies.
+    public let skippingWait: Set<String>
     public var bytes: Int64 { candidates.reduce(0) { $0 + $1.bytes } }
 }
 
