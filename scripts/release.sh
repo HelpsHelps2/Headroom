@@ -31,12 +31,16 @@ if ! $headroom_unsigned; then
   codesign --verify --strict --verbose=2 "$headroom_app"
 fi
 
-headroom_stage="$(mktemp -d)"
-trap 'rm -rf "$headroom_stage"' EXIT
-cp -R "$headroom_app" "$headroom_stage/"
-ln -s /Applications "$headroom_stage/Applications"
+# Branded installer window: background, icon layout, and volume icon come from scripts/dmg/.
+headroom_venv="$headroom_root/.build/dmg-venv"
+if [[ ! -x "$headroom_venv/bin/dmgbuild" ]]; then
+  python3 -m venv "$headroom_venv"
+  "$headroom_venv/bin/pip" install --quiet --disable-pip-version-check -r "$headroom_root/scripts/dmg/requirements.txt"
+fi
 rm -f "$headroom_dmg"
-hdiutil create -quiet -volname "Headroom $headroom_version" -srcfolder "$headroom_stage" -fs HFS+ -format UDZO -ov "$headroom_dmg"
+"$headroom_venv/bin/dmgbuild" -s "$headroom_root/scripts/dmg/settings.py" \
+  -D app="$headroom_app" -D background="$headroom_root/scripts/dmg/background.png" \
+  "Headroom $headroom_version" "$headroom_dmg" >/dev/null
 
 if ! $headroom_unsigned; then
   codesign --force --timestamp --sign "$headroom_identity" "$headroom_dmg"

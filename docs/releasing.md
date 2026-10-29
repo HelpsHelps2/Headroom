@@ -36,6 +36,10 @@ If you have more than one Developer ID certificate, set `HEADROOM_SIGNING_IDENTI
 
 The script refuses to publish a dirty tree, an existing tag, a DMG that is not stapled, or a version without changelog notes.
 
+## Installer window
+
+[dmgbuild](https://github.com/dmgbuild/dmgbuild) lays out the DMG window without scripting Finder, so it works in CI. `release.sh` installs the pinned versions from `scripts/dmg/requirements.txt` into `.build/dmg-venv` on first use. The window background is `scripts/dmg/background.html`, rendered to the committed `background.png` and `background@2x.png` by `scripts/dmg/render-background.sh`. Icon positions in `scripts/dmg/settings.py` must match the ring centers in the HTML.
+
 ## Download links
 
 The product website lives in a separate repository. Its download buttons ask the GitHub API for the latest release and link the asset whose name ends in `-arm64.dmg`, so publishing a release updates the site with no other change. Keep that suffix when renaming release assets.
