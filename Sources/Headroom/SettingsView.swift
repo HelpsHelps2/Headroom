@@ -67,6 +67,7 @@ struct SettingsView: View {
                         }
                         .padding(.vertical, 3)
                     }
+                    if Updates.shared.enabled { updatesCard }
                     SectionLabel(text: "Never touched").padding(.top, 10)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Source, branches, lockfiles, and whole worktrees. Shared caches:")
@@ -80,6 +81,36 @@ struct SettingsView: View {
                 .padding(14)
             }
             .scrollIndicators(.never)
+        }
+    }
+
+    @ViewBuilder private var updatesCard: some View {
+        let updates = Updates.shared
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        SectionLabel(text: "Updates").padding(.top, 10)
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                setting("Install updates automatically", detail: "Downloads in the background, installs when idle") {
+                    Switch(isOn: updates.installsAutomatically, label: "Install updates automatically") { updates.setInstallsAutomatically(!updates.installsAutomatically) }
+                }
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Headroom \(version)").font(.sans(12, .medium))
+                        Text(updates.ready.map { "\($0) is ready to install" } ?? updates.available.map { "\($0) is available" } ?? "Checks once a day")
+                            .font(.sans(10.5)).foregroundStyle(updates.ready != nil || updates.available != nil ? theme.accent : theme.muted)
+                    }
+                    Spacer()
+                    Button {
+                        if updates.ready != nil { updates.restart() } else { updates.checkForUpdates() }
+                    } label: {
+                        Text(updates.ready != nil ? "Restart" : updates.available != nil ? "Update…" : "Check now")
+                            .font(.sans(11.5, .semibold)).foregroundStyle(theme.accent).contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressStyle())
+                    .disabled(updates.ready == nil && !updates.canCheck)
+                }
+            }
+            .padding(.vertical, 3)
         }
     }
 

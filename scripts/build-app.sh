@@ -3,7 +3,10 @@ set -euo pipefail
 headroom_root="$(cd "$(dirname "$0")/.." && pwd)"
 headroom_configuration="${1:-debug}"
 headroom_version="$(tr -d '[:space:]' < "$headroom_root/VERSION")"
-headroom_build="$(git -C "$headroom_root" rev-list --count HEAD 2>/dev/null || echo 1)"
+# Sparkle compares this build number, so it must grow with every release. HEADROOM_BUILD overrides it for update tests.
+headroom_build="${HEADROOM_BUILD:-$(git -C "$headroom_root" rev-list --count HEAD 2>/dev/null || echo 1)}"
+headroom_feed="https://github.com/HelpsHelps2/Headroom/releases/latest/download/appcast.xml"
+headroom_update_key="C+++w427DPJbCNljhTF5b/7Cr07DF0jO+/qa6tmWQHA="
 headroom_bundle_id="${HEADROOM_BUNDLE_ID:-io.github.helpshelps2.headroom}"
 export CLANG_MODULE_CACHE_PATH="$headroom_root/.build/module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$headroom_root/.build/module-cache"
@@ -15,6 +18,16 @@ mkdir -p "$headroom_app/Contents/MacOS" "$headroom_app/Contents/Resources"
 cp "$headroom_bin/Headroom" "$headroom_app/Contents/MacOS/Headroom"
 cp "$headroom_bin/headroom-cli" "$headroom_app/Contents/MacOS/headroom-cli"
 cp "$headroom_root/LICENSE" "$headroom_root/NOTICE" "$headroom_app/Contents/Resources/"
+
+# Sparkle for updates. Headroom is not sandboxed, so Sparkle's XPC services are not needed.
+headroom_sparkle="$headroom_app/Contents/Frameworks/Sparkle.framework"
+mkdir -p "$headroom_app/Contents/Frameworks"
+ditto "$headroom_bin/Sparkle.framework" "$headroom_sparkle"
+rm -rf "$headroom_sparkle/XPCServices" "$headroom_sparkle/Versions/B/XPCServices"
+# SwiftPM adds an rpath to its own build folder. Bundles load Sparkle from Contents/Frameworks and must not carry local paths.
+otool -l "$headroom_app/Contents/MacOS/Headroom" | awk '$1 == "path" && $2 ~ /^\// { print $2 }' | while read -r rpath; do
+  install_name_tool -delete_rpath "$rpath" "$headroom_app/Contents/MacOS/Headroom"
+done
 
 # The icon is drawn by the app itself so it stays in step with the interface.
 headroom_iconset="$(mktemp -d)/AppIcon.iconset"
@@ -42,9 +55,16 @@ cat > "$headroom_app/Contents/Info.plist" <<PLIST
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSHumanReadableCopyright</key><string>Copyright 2026 Headroom contributors. Apache-2.0.</string>
+<key>SUFeedURL</key><string>$headroom_feed</string>
+<key>SUPublicEDKey</key><string>$headroom_update_key</string>
+<key>SUEnableAutomaticChecks</key><true/>
+<key>SUAutomaticallyUpdate</key><true/>
+<key>SUVerifyUpdateBeforeExtraction</key><true/>
 </dict></plist>
 PLIST
-# Ad-hoc signature for local runs. scripts/release.sh re-signs with Developer ID.
-codesign --force --sign - "$headroom_app/Contents/MacOS/headroom-cli"
-codesign --force --sign - "$headroom_app"
+# Ad-hoc signature for local runs. scripts/release.sh re-signs with Developer ID. Inner code first.
+for target in "$headroom_app/Contents/MacOS/headroom-cli" "$headroom_sparkle/Versions/B/Autoupdate" \
+              "$headroom_sparkle/Versions/B/Updater.app" "$headroom_sparkle" "$headroom_app"; do
+  codesign --force --sign - "$target"
+done
 printf 'Built %s\n' "$headroom_app"

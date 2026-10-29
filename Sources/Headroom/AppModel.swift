@@ -199,6 +199,7 @@ final class AppModel {
     }
 
     private func tick() async {
+        Updates.shared.installIfIdle()
         guard sweep == nil, !scanning, !preferences.roots.isEmpty else { return }
         await scan()
         guard preferences.scheduled, !preferences.paused, let engine else { return }

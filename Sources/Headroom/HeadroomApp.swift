@@ -43,6 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let index = args.firstIndex(of: "--snapshot"), index + 1 < args.count {
             let directory = args[index + 1]
             Task { @MainActor in await Snapshots.run(into: directory) }
+        } else if !AppModel.shared.demo {
+            Updates.shared.start()
         }
     }
 }
@@ -135,11 +137,28 @@ struct MenuContent: View {
         }
         Button("Scan Now") { Task { await model.scan() } }
             .disabled(model.scanning || model.demo || model.preferences.roots.isEmpty)
+        UpdateMenuItems()
         if model.preferences.scheduled {
             Button(model.preferences.paused ? "Resume Automatic Cleanup" : "Pause Automatic Cleanup") { model.togglePaused() }
         }
         Divider()
         Button("Quit Headroom") { NSApp.terminate(nil) }.keyboardShortcut("q")
+    }
+}
+
+struct UpdateMenuItems: View {
+    private var updates: Updates { .shared }
+    var body: some View {
+        if updates.enabled {
+            Divider()
+            if let ready = updates.ready {
+                Button("Restart to Update to \(ready)") { updates.restart() }
+            } else if let available = updates.available {
+                Button("Update to \(available)…") { updates.checkForUpdates() }
+            } else {
+                Button("Check for Updates…") { updates.checkForUpdates() }.disabled(!updates.canCheck)
+            }
+        }
     }
 }
 
