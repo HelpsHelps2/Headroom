@@ -25,7 +25,9 @@ headroom_dmg="$headroom_root/dist/Headroom-$headroom_version-arm64.dmg"
 
 if ! $headroom_unsigned; then
   # Inner code first, then the bundle. Hardened runtime and a secure timestamp are required for notarization.
-  for target in "$headroom_app/Contents/MacOS/headroom-cli" "$headroom_app"; do
+  headroom_sparkle="$headroom_app/Contents/Frameworks/Sparkle.framework"
+  for target in "$headroom_app/Contents/MacOS/headroom-cli" "$headroom_sparkle/Versions/B/Autoupdate" \
+                "$headroom_sparkle/Versions/B/Updater.app" "$headroom_sparkle" "$headroom_app"; do
     codesign --force --options runtime --timestamp --sign "$headroom_identity" "$target"
   done
   codesign --verify --strict --verbose=2 "$headroom_app"
@@ -51,4 +53,6 @@ if ! $headroom_unsigned; then
 fi
 
 (cd "$headroom_root/dist" && shasum -a 256 "$(basename "$headroom_dmg")" > "$(basename "$headroom_dmg").sha256")
+# The update feed signs the final, stapled DMG.
+$headroom_unsigned || bash "$headroom_root/scripts/appcast.sh" "$headroom_dmg" >/dev/null
 printf 'Built %s\n' "$headroom_dmg"

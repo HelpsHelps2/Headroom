@@ -1,7 +1,8 @@
 # Changelog
 
-## 0.2.1
+## 0.3.0
 
+- Headroom updates itself. It checks once a day, downloads new versions in the background, and installs them when it is idle. Updates must be signed with the project key and Developer ID. Settings has the switch and a Check Now button.
 - Worktrees opens on every repository and every worktree, with a branch graph per repository. Pick one repository or filter to Stale or Kept from there.
 - Check worktrees to clean just those. Worktrees kept only because they were built in the last 24 hours can be checked and cleaned right away; in-use and data folders stay locked. Every folder is still checked again just before deletion.
 - **Clean now** on the Disk screen and in the menu bar reviews everything that can go today, including builds from the last 24 hours. It's the main button when nothing is stale yet.

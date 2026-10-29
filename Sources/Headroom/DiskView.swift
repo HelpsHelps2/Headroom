@@ -11,8 +11,14 @@ struct DiskView: View {
             TopBar {
                 ScanButton()
             } title: { Brand() } trailing: {
-                IconButton(symbol: "gearshape", help: "Settings") { model.screen = .settings }
+                IconButton(symbol: "gearshape", help: Updates.shared.ready.map { "Settings · Headroom \($0) is ready to install" }
+                           ?? Updates.shared.available.map { "Settings · Headroom \($0) is available" } ?? "Settings") { model.screen = .settings }
                     .keyboardShortcut(",", modifiers: .command)
+                    .overlay(alignment: .topTrailing) {
+                        if Updates.shared.ready != nil || Updates.shared.available != nil {
+                            Circle().fill(theme.accent).frame(width: 6, height: 6).offset(x: -2, y: 2).allowsHitTesting(false)
+                        }
+                    }
             }
             Tabs(selection: $model.tab)
             VStack(spacing: 5) {
