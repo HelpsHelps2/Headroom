@@ -22,7 +22,8 @@ build() {  # build number, destination
   HEADROOM_BUILD="$1" HEADROOM_BUNDLE_ID="$bundle_id" bash "$headroom_root/scripts/build-app.sh" debug >/dev/null
   local app="$headroom_root/dist/Headroom.app" sparkle="$headroom_root/dist/Headroom.app/Contents/Frameworks/Sparkle.framework"
   for target in "$app/Contents/MacOS/headroom-cli" "$sparkle/Versions/B/Autoupdate" "$sparkle/Versions/B/Updater.app" "$sparkle" "$app"; do
-    codesign --force --options runtime --timestamp=none --sign "$headroom_identity" "$target" 2>/dev/null
+    codesign --force --options runtime --timestamp=none --sign "$headroom_identity" "$target" 2>"$work/codesign.log" \
+      || { cat "$work/codesign.log" >&2; exit 1; }
   done
   mkdir -p "$2"; ditto "$app" "$2/Headroom.app"
 }
