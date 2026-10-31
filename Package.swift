@@ -19,7 +19,8 @@ let package = Package(
         .executableTarget(name: "Headroom", dependencies: ["HeadroomCore", .product(name: "Sparkle", package: "Sparkle")],
                          linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
         .executableTarget(name: "HeadroomCLI", dependencies: ["HeadroomCore"]),
-        .testTarget(name: "HeadroomCoreTests", dependencies: ["HeadroomCore"])
+        .testTarget(name: "HeadroomCoreTests", dependencies: ["HeadroomCore"]),
+        .testTarget(name: "HeadroomTests", dependencies: ["Headroom"])
     ],
     swiftLanguageModes: [.v5]
 )

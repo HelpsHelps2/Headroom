@@ -29,6 +29,8 @@ struct Theme {
             Color(hex: 0xF7F7F6)
         }
     }
+    var success: Color { Color(hex: dark ? 0x69D69A : 0x187844) }
+
     var coreFill: RadialGradient {
         dark ? RadialGradient(colors: [Color(hex: 0x2C3037), Color(hex: 0x1C1F24)], center: UnitPoint(x: 0.5, y: 0.3), startRadius: 0, endRadius: 110)
              : RadialGradient(colors: [.white, Color(hex: 0xF5F5F4)], center: UnitPoint(x: 0.5, y: 0.28), startRadius: 0, endRadius: 120)
