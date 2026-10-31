@@ -18,11 +18,15 @@ struct SweepView: View {
             }
             .padding(.top, 22)
             DiskRing(capacity: model.inventory.capacity, available: model.inventory.available + sweep.freed,
-                     highlight: max(sweep.total - sweep.freed - sweep.skippedBytes, 0), tickSpeed: 12) {
-                CoreDisc {
+                     highlight: max(sweep.total - sweep.freed - sweep.skippedBytes, 0), tickSpeed: 12, active: !sweep.finished) {
+                CoreDisc(success: sweep.succeeded) {
                     VStack(spacing: 4) {
+                        if sweep.succeeded {
+                            Image(systemName: "checkmark.circle.fill").font(.sans(20)).foregroundStyle(theme.success)
+                        }
                         BigBytes(bytes: sweep.freed)
-                        Text("of \(Format.bytes(sweep.total)) freed").font(.mono(11)).foregroundStyle(theme.muted)
+                        Text(sweep.finished ? "RECLAIMED" : "of \(Format.bytes(sweep.total)) freed")
+                            .font(.mono(11)).foregroundStyle(sweep.succeeded ? theme.success : theme.muted)
                     }
                 }
             }
@@ -56,7 +60,7 @@ struct SweepView: View {
     }
 
     private func pill(_ sweep: SweepState) -> String {
-        if sweep.finished { return sweep.stopping ? "Stopped" : "Done" }
+        if sweep.finished { return sweep.failed ? "Cleanup failed" : sweep.stopping ? "Stopped" : "Done" }
         if sweep.stopping { return "Stopping" }
         return "Sweeping · \(min(sweep.done + 1, sweep.candidates.count)) of \(sweep.candidates.count)"
     }

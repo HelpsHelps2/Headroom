@@ -26,13 +26,14 @@ struct DiskView: View {
                 Text(freeLine).font(.mono(12.5)).foregroundStyle(theme.muted).monospacedDigit()
             }
             .padding(.top, firstLaunch ? 16 : 24)
-            DiskRing(capacity: model.inventory.capacity, available: model.inventory.available, highlight: onlyRecent ? model.recentBytes : model.reclaimable, size: firstLaunch ? 212 : 250) {
+            DiskRing(capacity: model.inventory.capacity, available: model.inventory.available, highlight: onlyRecent ? model.recentBytes : model.reclaimable, size: firstLaunch ? 212 : 250, active: model.scanning) {
                 Button(action: coreAction) { CoreDisc(size: firstLaunch ? 132 : 156) { core } }
                     .buttonStyle(PressStyle())
                     .disabled(model.hasScanned && model.eligible.isEmpty && model.recent.isEmpty && !model.preferences.roots.isEmpty)
                     .accessibilityLabel(model.preferences.roots.isEmpty ? (model.chosenSuggestions.isEmpty ? "Add folder" : "Watch \(model.chosenSuggestions.count) folders")
                                         : onlyRecent ? "Clean \(Format.bytes(model.recentBytes)) now" : "Reclaim \(Format.bytes(model.reclaimable))")
             }
+            .help("Gray: other used space. Amber: reclaimable output. Empty track: free space. The outer ticks move only while scanning or cleaning.")
             .padding(.top, firstLaunch ? 8 : 14)
             if firstLaunch {
                 suggestionList.padding(.horizontal, 14).padding(.top, 12)
@@ -68,6 +69,10 @@ struct DiskView: View {
         if model.preferences.roots.isEmpty {
             guard model.inventory.capacity > 0 else { return "Watches worktrees for stale builds" }
             return "\(Format.bytes(model.inventory.available)) free on \(model.inventory.volume.isEmpty ? "this disk" : model.inventory.volume)"
+        }
+        if model.scanning {
+            if let reclaimed = model.lastReclaimed { return "\(Format.bytes(reclaimed)) reclaimed · refreshing…" }
+            return "Refreshing disk usage…"
         }
         guard model.hasScanned else { return "Looking through your worktrees" }
         let volume = model.inventory.volume.isEmpty ? "this disk" : model.inventory.volume

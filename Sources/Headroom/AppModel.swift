@@ -51,6 +51,8 @@ struct SweepState {
     var entries: [String: HistoryEntry] = [:]
     var finished = false
     var stopping = false
+    var failed = false
+    var succeeded: Bool { finished && !stopping && !failed && freed > 0 && !entries.values.contains { $0.outcome == "Interrupted" } }
     var total: Int64 { candidates.reduce(0) { $0 + $1.bytes } }
     var freed: Int64 { entries.values.filter { $0.outcome == "Cleaned" }.reduce(0) { $0 + $1.bytes } }
     var skippedBytes: Int64 {
@@ -82,6 +84,8 @@ final class AppModel {
     @ObservationIgnored var selectionAnchor: String?
     var reviewFilter: ReviewFilter = .remove
     var sweep: SweepState?
+    var lastReclaimed: Int64?
+    @ObservationIgnored private var inventoryRevision = 0
     /// nil shows every repository.
     var repository: String?
     var worktreeFilter: WorktreeFilter = .all
@@ -167,12 +171,15 @@ final class AppModel {
     func scan() async {
         guard let engine, !scanning, sweep == nil, !preferences.roots.isEmpty else { return }
         scanning = true
+        let revision = inventoryRevision
         defer { scanning = false }
         let progress: HeadroomCore.Scanner.Progress = { [weak self] done, total in
             Task { @MainActor in self?.scanProgress = (done, total) }
         }
         do {
-            inventory = try await Task.detached(priority: .utility) { try await engine.scan(progress: progress) }.value
+            let refreshed = try await Task.detached(priority: .utility) { try await engine.scan(progress: progress) }.value
+            guard revision == inventoryRevision else { return }
+            inventory = refreshed
             hasScanned = true
             history = try await engine.history()
             space = try await engine.space(since: Date().addingTimeInterval(-14 * 86400))
@@ -322,6 +329,8 @@ final class AppModel {
     func startSweep() {
         let included = reviewIncluded
         guard !included.isEmpty, sweep == nil else { return }
+        inventoryRevision += 1
+        lastReclaimed = nil
         sweep = SweepState(candidates: included)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { screen = .sweep }
         if demo { Demo.simulateSweep(self); return }
@@ -340,13 +349,18 @@ final class AppModel {
                 for entry in results { self?.record(entry) }
             } catch {
                 self?.error = error.localizedDescription
+                self?.sweep?.failed = true
             }
             self?.finishSweep()
         }
     }
 
     func record(_ entry: HistoryEntry) {
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) { sweep?.entries[entry.path] = entry }
+        guard let sweep, !sweep.finished, sweep.candidates.contains(where: { $0.path == entry.path }) else { return }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
+            self.sweep?.entries[entry.path] = entry
+            if entry.outcome == "Cleaned" { inventory.artifacts.removeAll { $0.path == entry.path } }
+        }
     }
 
     func finishSweep() {
@@ -362,6 +376,15 @@ final class AppModel {
     }
 
     func closeSweep() {
+        guard let completed = sweep, completed.finished else { return }
+        lastReclaimed = completed.freed
+        // Refresh real free space without waiting for the full worktree scan.
+        if demo {
+            inventory.available = min(inventory.capacity, inventory.available + completed.freed)
+        } else if let attributes = try? FileManager.default.attributesOfFileSystem(forPath: preferences.roots.first?.path ?? "/"),
+                  let free = attributes[.systemFreeSize] as? NSNumber {
+            inventory.available = free.int64Value
+        }
         sweep = nil
         selected = []
         withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { screen = .main }

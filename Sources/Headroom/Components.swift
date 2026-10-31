@@ -131,8 +131,8 @@ struct DiskRing<Core: View>: View {
     var lineWidth: CGFloat = 9
     var ticks = true
     var tickSpeed: Double = 90
+    var active = false
     @ViewBuilder var core: Core
-    @State private var rotation = 0.0
 
     var body: some View {
         let total = Double(max(capacity, 1))
@@ -143,10 +143,13 @@ struct DiskRing<Core: View>: View {
         let radius = size * 104 / 250
         ZStack {
             if ticks {
-                Circle()
-                    .stroke(theme.track, style: StrokeStyle(lineWidth: size * 3 / 250, dash: [1.2, 6.4]))
-                    .frame(width: radius * 2 + size * 34 / 250, height: radius * 2 + size * 34 / 250)
-                    .rotationEffect(.degrees(rotation))
+                TimelineView(.animation(paused: !active || reduceMotion)) { context in
+                    let rotation = active && !reduceMotion ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: tickSpeed) / tickSpeed * 360 : 0
+                    Circle()
+                        .stroke(theme.track, style: StrokeStyle(lineWidth: size * 3 / 250, dash: [1.2, 6.4]))
+                        .frame(width: radius * 2 + size * 34 / 250, height: radius * 2 + size * 34 / 250)
+                        .rotationEffect(.degrees(rotation))
+                }
             }
             Group {
                 Circle().stroke(theme.track, lineWidth: lineWidth)
@@ -160,10 +163,6 @@ struct DiskRing<Core: View>: View {
             core
         }
         .frame(width: size, height: size)
-        .onAppear {
-            guard ticks, !reduceMotion else { return }
-            withAnimation(.linear(duration: tickSpeed).repeatForever(autoreverses: false)) { rotation = 360 }
-        }
         .accessibilityElement(children: .combine)
     }
 }
@@ -171,10 +170,12 @@ struct DiskRing<Core: View>: View {
 struct CoreDisc<Content: View>: View {
     @Environment(\.theme) private var theme
     var size: CGFloat = 156
+    var success = false
     @ViewBuilder var content: Content
     var body: some View {
         ZStack {
             Circle().fill(theme.coreFill)
+                .overlay(Circle().fill(success ? theme.success.opacity(theme.dark ? 0.25 : 0.14) : .clear))
                 .overlay(Circle().strokeBorder(theme.dark ? Color.white.opacity(0.05) : Color.black.opacity(0.06), lineWidth: 1))
                 .overlay(alignment: .top) {
                     if theme.dark { Circle().trim(from: 0.42, to: 0.58).stroke(.white.opacity(0.09), lineWidth: 1).rotationEffect(.degrees(180)) }
