@@ -96,8 +96,14 @@ enum Demo {
         model.sweepTask = Task { @MainActor in
             guard let candidates = model.sweep?.candidates else { return }
             for (index, candidate) in candidates.enumerated() {
-                try? await Task.sleep(for: .milliseconds(650))
+                model.track(.verifying(path: candidate.path))
+                try? await Task.sleep(for: .milliseconds(index == 0 ? 1400 : 300))
                 if Task.isCancelled { break }
+                let steps = index == 0 ? 16 : 3
+                for step in 1...steps where index != 3 {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    model.track(.removing(path: candidate.path, bytes: candidate.bytes * Int64(step) / Int64(steps)))
+                }
                 let skip = index == 3
                 model.record(HistoryEntry(id: UUID().uuidString, date: Date(), path: candidate.path, outcome: skip ? "Skipped" : "Cleaned",
                                           detail: skip ? "In use by Cursor (pid 2214)." : "Demo: nothing was deleted.",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- The sweep shows progress inside each folder. The freed total and the ring count up as files are removed, the current folder fills as it goes, and the line under the status says whether Headroom is checking the folder or removing it. Large Cargo `target` folders no longer look stalled.
+- A finished sweep shows what it reclaimed with a check mark, or says the cleanup failed. The Disk screen shows the new free space right away instead of the old total while it rescans.
+- The outer ticks on the ring move only while Headroom is scanning or cleaning.
+
 ## 0.3.0
 
 - Headroom updates itself. It checks once a day, downloads new versions in the background, and installs them when it is idle. Updates must be signed with the project key and Developer ID. Settings has the switch and a Check Now button.

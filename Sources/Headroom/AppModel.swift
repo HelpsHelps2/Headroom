@@ -49,12 +49,29 @@ struct SweepRun: Identifiable {
 struct SweepState {
     var candidates: [Artifact]
     var entries: [String: HistoryEntry] = [:]
+    /// Live work inside the current folder; cleared once that folder has an entry.
+    var activity: CleanupActivity?
     var finished = false
     var stopping = false
     var failed = false
     var succeeded: Bool { finished && !stopping && !failed && freed > 0 && !entries.values.contains { $0.outcome == "Interrupted" } }
     var total: Int64 { candidates.reduce(0) { $0 + $1.bytes } }
-    var freed: Int64 { entries.values.filter { $0.outcome == "Cleaned" }.reduce(0) { $0 + $1.bytes } }
+    /// Bytes removed so far in the folder being swept, capped at what review measured.
+    var removing: Int64 {
+        guard case let .removing(path, bytes)? = activity, entries[path] == nil,
+              let candidate = candidates.first(where: { $0.path == path }) else { return 0 }
+        return min(bytes, candidate.bytes)
+    }
+    /// True once the current folder has moved past verification.
+    var removingStarted: Bool {
+        guard case let .removing(path, _)? = activity else { return false }
+        return entries[path] == nil
+    }
+    var verifying: Bool {
+        guard case let .verifying(path)? = activity else { return false }
+        return entries[path] == nil
+    }
+    var freed: Int64 { entries.values.filter { $0.outcome == "Cleaned" }.reduce(0) { $0 + $1.bytes } + removing }
     var skippedBytes: Int64 {
         candidates.filter { entries[$0.path].map { $0.outcome != "Cleaned" } ?? false }.reduce(0) { $0 + $1.bytes }
     }
@@ -343,9 +360,11 @@ final class AppModel {
                 let paths = Set(included.map(\.path))
                 let plan = try await engine.plan(paths: paths, skippingWait: self?.reviewSkippingWait.intersection(paths) ?? [])
                 self?.sweep?.candidates = plan.candidates
-                let results = try await engine.execute(plan) { entry in
+                let results = try await engine.execute(plan, progress: { entry in
                     Task { @MainActor in self?.record(entry) }
-                }
+                }, activity: { activity in
+                    Task { @MainActor in self?.track(activity) }
+                })
                 for entry in results { self?.record(entry) }
             } catch {
                 self?.error = error.localizedDescription
@@ -361,6 +380,11 @@ final class AppModel {
             self.sweep?.entries[entry.path] = entry
             if entry.outcome == "Cleaned" { inventory.artifacts.removeAll { $0.path == entry.path } }
         }
+    }
+
+    func track(_ activity: CleanupActivity) {
+        guard sweep?.finished == false else { return }
+        withAnimation(.easeOut(duration: 0.25)) { sweep?.activity = activity }
     }
 
     func finishSweep() {

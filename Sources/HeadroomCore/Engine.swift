@@ -80,7 +80,9 @@ public actor Engine {
         return try execute(plan(paths: Set(eligible.map(\.path)), automatic: true))
     }
     /// Runs a reviewed plan one folder at a time. Cancelling the calling task stops before the next folder.
-    public func execute(_ plan: CleanupPlan, progress: (@Sendable (HistoryEntry) -> Void)? = nil) throws -> [HistoryEntry] {
+    /// `progress` fires once per finished folder; `activity` reports verification and removal inside the current folder.
+    public func execute(_ plan: CleanupPlan, progress: (@Sendable (HistoryEntry) -> Void)? = nil,
+                        activity: (@Sendable (CleanupActivity) -> Void)? = nil) throws -> [HistoryEntry] {
         let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)
         defer { withExtendedLifetime(lease) {} }
         let preferences = try store.preferences()
@@ -96,6 +98,7 @@ public actor Engine {
                       URL(fileURLWithPath: artifact.project).resolvingSymlinksInPath().path == artifact.project else {
                     throw HeadroomError.message("Project is outside its approved scan root.")
                 }
+                activity?(.verifying(path: artifact.path))
                 // Re-inspect the entire artifact and live activity immediately before deletion.
                 let fresh = try scanner.inspect(kind: artifact.kind, project: artifact.project, root: artifact.root, preferences: preferences, activity: activityProvider(), now: clock())
                 guard fresh.eligible(skippingWait: plan.skippingWait.contains(fresh.path)) else { throw HeadroomError.message(fresh.reasons.joined(separator: " ")) }
@@ -105,7 +108,8 @@ public actor Engine {
                 defer { withExtendedLifetime(locks) {} }
                 entry.outcome = "Cleaning"; entry.detail = "Permanent removal of verified \(fresh.kind.directory) output."
                 try store.record(entry)
-                try ContainedDeletion.remove(fresh)
+                activity?(.removing(path: artifact.path, bytes: 0))
+                try ContainedDeletion.remove(fresh) { bytes in activity?(.removing(path: artifact.path, bytes: bytes)) }
                 entry.outcome = "Cleaned"; entry.bytes = fresh.bytes
                 entry.detail = fresh.kind == .node
                     ? "Dependencies removed. Package caches were preserved. Reinstall before the next build."

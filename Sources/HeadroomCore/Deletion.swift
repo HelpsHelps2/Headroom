@@ -3,7 +3,9 @@ import Darwin
 
 // All deletion is relative to opened directory descriptors. Never follow links.
 enum ContainedDeletion {
-    static func remove(_ artifact: Artifact) throws {
+    /// `removed` receives the running total of allocated bytes removed, at most every 64 MB or quarter second.
+    static func remove(_ artifact: Artifact, removed: ((Int64) -> Void)? = nil) throws {
+        let counter = Counter(report: removed)
         let parent = try openDirectory(artifact.project)
         guard parent >= 0 else { throw HeadroomError.message("Project directory is no longer accessible.") }
         defer { close(parent) }
@@ -13,7 +15,8 @@ enum ContainedDeletion {
         defer { close(target) }
         var metadata = stat()
         guard fstat(target, &metadata) == 0, FileInspection.identity(metadata) == artifact.identity else { throw HeadroomError.message("Output identity changed after review.") }
-        try contents(target, device: metadata.st_dev, removesLinks: artifact.kind.removesLinks)
+        try contents(target, device: metadata.st_dev, removesLinks: artifact.kind.removesLinks, counter: counter)
+        counter.flush()
         var current = stat()
         guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
               FileInspection.identity(current) == artifact.identity else { throw HeadroomError.message("Output moved during cleanup; preserved replacement directory.") }
@@ -33,7 +36,23 @@ enum ContainedDeletion {
         }
         return fd
     }
-    private static func contents(_ fd: Int32, device: dev_t, removesLinks: Bool) throws {
+    /// Counts bytes the same way inspection measures them: allocated blocks of files only this tree references.
+    final class Counter {
+        let report: ((Int64) -> Void)?
+        var bytes: Int64 = 0
+        var reported: Int64 = 0
+        var last = Date()
+        init(report: ((Int64) -> Void)?) { self.report = report }
+        func add(_ metadata: stat) {
+            guard let report, metadata.st_nlink <= 1 else { return }
+            bytes += Int64(metadata.st_blocks) * 512
+            if bytes - reported >= 64 << 20 || Date().timeIntervalSince(last) >= 0.25 {
+                reported = bytes; last = Date(); report(bytes)
+            }
+        }
+        func flush() { if bytes != reported { reported = bytes; report?(bytes) } }
+    }
+    private static func contents(_ fd: Int32, device: dev_t, removesLinks: Bool, counter: Counter) throws {
         // Read the whole listing before unlinking: removing entries mid-iteration can make readdir skip some.
         for name in try FileInspection.entries(fd) {
             var metadata = stat()
@@ -44,7 +63,7 @@ enum ContainedDeletion {
                 defer { close(child) }
                 var opened = stat()
                 guard fstat(child, &opened) == 0, FileInspection.identity(opened) == FileInspection.identity(metadata) else { throw HeadroomError.message("Directory changed during cleanup.") }
-                try contents(child, device: device, removesLinks: removesLinks)
+                try contents(child, device: device, removesLinks: removesLinks, counter: counter)
                 var current = stat()
                 guard fstatat(fd, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
                       FileInspection.identity(current) == FileInspection.identity(metadata) else { throw HeadroomError.message("Directory was replaced during cleanup.") }
@@ -55,6 +74,7 @@ enum ContainedDeletion {
             } else {
                 guard metadata.st_mode & S_IFMT == S_IFREG else { throw HeadroomError.message("A link or special file appeared during cleanup.") }
                 guard unlinkat(fd, name, 0) == 0 else { throw failure() }
+                counter.add(metadata)
             }
         }
     }

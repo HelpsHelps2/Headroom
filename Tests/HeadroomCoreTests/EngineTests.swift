@@ -355,6 +355,19 @@ final class NodeAdapterTests: XCTestCase {
         let samples = try await engine.space(since: .distantPast)
         XCTAssertFalse(samples.isEmpty)
     }
+    func testActivityReportsVerificationThenRemovedBytes() async throws {
+        let f = try NodeFixture(), engine = try f.engine()
+        try await engine.save(f.preferences())
+        let scanned = try await engine.scan()
+        let item = try XCTUnwrap(scanned.artifacts.first)
+        let plan = try await engine.plan(paths: [item.path])
+        let seen = Locked<[CleanupActivity]>([])
+        _ = try await engine.execute(plan, activity: { activity in seen.with { $0.append(activity) } })
+        let activities = seen.with { $0 }
+        XCTAssertEqual(activities.first, .verifying(path: item.path))
+        XCTAssertEqual(activities.dropFirst().first, .removing(path: item.path, bytes: 0))
+        XCTAssertEqual(activities.last, .removing(path: item.path, bytes: item.bytes))
+    }
     func testWorktreeInfoNamesRepositoryAndBranch() throws {
         let f = try NodeFixture()
         _ = try Command.git(f.project.path, ["checkout", "-q", "-b", "feat/handoff"])

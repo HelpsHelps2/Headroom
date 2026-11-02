@@ -109,6 +109,14 @@ public struct CleanupPlan: Codable, Sendable {
     public var bytes: Int64 { candidates.reduce(0) { $0 + $1.bytes } }
 }
 
+/// What the sweep is doing inside the current folder, between finished-folder entries.
+public enum CleanupActivity: Sendable, Equatable {
+    /// Re-inspecting the folder and live activity before anything is removed.
+    case verifying(path: String)
+    /// Removing files; `bytes` counts allocated bytes removed so far, matching `Artifact.bytes`.
+    case removing(path: String, bytes: Int64)
+}
+
 public struct HistoryEntry: Codable, Identifiable, Sendable {
     public var id: String
     public var date: Date
