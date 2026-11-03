@@ -125,7 +125,7 @@ struct DiskView: View {
                 return ("\(trees) \(trees == 1 ? "worktree" : "worktrees") built recently", "Skips the \(Format.hours(model.preferences.keepHours)) wait", "Clean now")
             }
             if model.eligible.isEmpty {
-                return ("Nothing idle long enough", "\(model.kept.count) folders kept · \(Format.hours(model.preferences.keepHours)) grace period", model.kept.isEmpty ? nil : "Why")
+                return ("Nothing idle long enough", "\(model.kept.count) folders kept · cleans after \(Format.hours(model.preferences.keepHours)) unused", model.kept.isEmpty ? nil : "Why")
             }
             let folders = model.eligible.count == 1 ? "1 folder" : "\(model.eligible.count) folders"
             return ("\(folders) · \(repos) \(repos == 1 ? "repo" : "repos")", "\(model.kept.count) kept active · caches untouched", "Review")
@@ -238,7 +238,7 @@ struct DiskView: View {
             Group {
                 if !model.preferences.scheduled || !model.preferences.roots.contains(where: \.automatic) { Text("Automatic cleanup off") }
                 else if model.preferences.paused { Text("Automatic cleanup paused") }
-                else { Text("Automatic cleanup every ") + Text(Format.hours(model.preferences.intervalHours)).font(.mono(11.5, .medium)).foregroundColor(theme.ink) }
+                else { Text("Cleans automatically after ") + Text(Format.hours(model.preferences.keepHours)).font(.mono(11.5, .medium)).foregroundColor(theme.ink) + Text(" unused") }
             }
             .font(.sans(11.5)).foregroundStyle(theme.muted)
             Spacer()

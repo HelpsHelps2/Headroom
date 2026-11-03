@@ -33,7 +33,7 @@ The packaged app was captured on every screen in light and dark appearances usin
 
 The Engine actor is the app's initial worker. The CLI uses the same core and SQLite database (schema version 2: run grouping and free-space samples). A filesystem operation lease excludes concurrent Headroom operations. The separate authenticated XPC service remains future work. Closing the window leaves the menu bar app running; quitting stops it.
 
-Scheduled eligibility and deletion are covered with an injected clock and real fixture filesystem operations. Production login-item approval, long-running sleep/wake behavior, the full macOS support matrix, notification delivery, and notarized updates have not been validated.
+Scheduled eligibility and deletion are covered with an injected clock and real fixture filesystem operations. Sleep is counted as watched time only for sleeps the running app observed (unit-tested with injected intervals). Production login-item approval, real sleep/wake behavior, the full macOS support matrix, notification delivery, and notarized updates have not been validated.
 
 Each scan re-measures every candidate folder (about 2.6 million files in the inventory above). With automatic cleanup on, this repeats every five minutes at utility priority so observations stay continuous. Discovery results are cached between scans. Event-driven change detection would reduce this cost further and is not implemented.
 

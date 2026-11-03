@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+- Automatic cleanup runs much more often. Waiting for a folder to go unused and watching it for activity now happen at the same time, so a folder is cleaned about one wait after its last use instead of two.
+- Sleeping the Mac no longer restarts the wait, as long as Headroom keeps running. Quitting Headroom still restarts it.
+- A check with nothing ready no longer uses up the schedule. Headroom checks every 5 minutes and cleans as soon as a folder qualifies, at most once per interval.
+- Settings has 1 h and 2 h choices for both timers. "Idle at least" is now **Clean when unused for**: no builds, installs, or open files in the project for that long. "Run every" is now **Clean at most every**.
+
 ## 0.3.1
 
 - The sweep shows progress inside each folder. The freed total and the ring count up as files are removed, the current folder fills as it goes, and the line under the status says whether Headroom is checking the folder or removing it. Large Cargo `target` folders no longer look stalled.

@@ -8,6 +8,10 @@ public actor Engine {
     private let clock: @Sendable () -> Date
     private var inventory = Inventory.empty
     private let discovery = DiscoveryCache()
+    /// Times the Mac slept while this process kept running. Nothing can use a folder then, so these do not break observation.
+    private var sleeps: [DateInterval] = []
+    /// Longest unobserved awake stretch that keeps an observation continuous.
+    static let gapLimit: TimeInterval = 600
 
     public init(directory: URL = Paths.defaultState,
                 home: String = FileManager.default.homeDirectoryForCurrentUser.path,
@@ -26,6 +30,21 @@ public actor Engine {
     /// Observation times round-trip through SQLite and Date's 2001 epoch, which can shift them by a fraction of a microsecond.
     static func idle(since: Date, now: Date, hours: Double) -> Bool { now.timeIntervalSince(since) >= hours * 3600 - 0.001 }
     public func space(since: Date) throws -> [SpaceSample] { try store.space(since: since) }
+    /// Records a sleep the calling process lived through. Only a process that stayed running can vouch that it watched.
+    public func recordSleep(_ interval: DateInterval) {
+        sleeps.append(interval)
+        sleeps = Array(sleeps.suffix(64))
+    }
+    /// True when every awake stretch between `seen` and `now` is within `gapLimit`, counting recorded sleeps as watched.
+    static func continuous(seen: Date, now: Date, sleeps: [DateInterval], gapLimit: TimeInterval = gapLimit) -> Bool {
+        guard now >= seen else { return false }
+        var cursor = seen
+        for sleep in sleeps.sorted(by: { $0.start < $1.start }) where sleep.end > cursor && sleep.start < now {
+            if sleep.start.timeIntervalSince(cursor) > gapLimit { return false }
+            cursor = max(cursor, sleep.end)
+        }
+        return now.timeIntervalSince(cursor) <= gapLimit
+    }
     public func scan(progress: Scanner.Progress? = nil) throws -> Inventory {
         let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)
         defer { withExtendedLifetime(lease) {} }
@@ -33,8 +52,9 @@ public actor Engine {
         let preferences = try store.preferences(), now = clock()
         try store.pruneObservations(now: now)
         var result = scanner.scan(preferences: preferences, activity: activityProvider(), now: now, progress: progress, discovery: discovery)
+        let sleeps = self.sleeps
         for index in result.artifacts.indices {
-            let since = try store.observed(result.artifacts[index], now: now, gapLimit: 600)
+            let since = try store.observed(result.artifacts[index], now: now) { Self.continuous(seen: $0, now: now, sleeps: sleeps) }
             result.artifacts[index].firstObserved = since
         }
         inventory = result
@@ -57,27 +77,22 @@ public actor Engine {
         return .init(id: UUID(), createdAt: now, candidates: candidates, preferences: preferences, automatic: automatic,
                      skippingWait: skipping.intersection(candidates.map(\.path)))
     }
+    /// Cleans what automatic cleanup may remove, at most once per interval. A check with nothing ready does not use up
+    /// the interval, so output that becomes idle later is cleaned at the next check instead of a full interval later.
     public func runScheduleIfDue() throws -> [HistoryEntry] {
-        let preferences = try store.preferences()
+        let preferences = try store.preferences(), now = clock()
         guard preferences.scheduled, !preferences.paused else { return [] }
-        let due = try claimSchedule(interval: preferences.intervalHours * 3600)
-        return try scheduledRun(due: due)
+        let eligible = inventory.artifacts.filter { artifact in
+            artifact.eligible && Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours) &&
+                preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic })
+        }
+        guard try claimSchedule(interval: preferences.intervalHours * 3600, ready: !eligible.isEmpty) else { return [] }
+        return try execute(plan(paths: Set(eligible.map(\.path)), automatic: true))
     }
-    private func claimSchedule(interval: TimeInterval) throws -> Bool {
+    private func claimSchedule(interval: TimeInterval, ready: Bool) throws -> Bool {
         let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)
         defer { withExtendedLifetime(lease) {} }
-        return try store.scheduleDue(now: clock(), interval: interval)
-    }
-    private func scheduledRun(due: Bool) throws -> [HistoryEntry] {
-        guard due else { return [] }
-        let paths = Set(inventory.artifacts.filter { $0.eligible }.map(\.path))
-        guard !paths.isEmpty else { return [] }
-        let preferences = try store.preferences(), now = clock()
-        let eligible = inventory.artifacts.filter { artifact in
-            paths.contains(artifact.path) && Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours) && preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic })
-        }
-        guard !eligible.isEmpty else { return [] }
-        return try execute(plan(paths: Set(eligible.map(\.path)), automatic: true))
+        return try store.scheduleDue(now: clock(), interval: interval, ready: ready)
     }
     /// Runs a reviewed plan one folder at a time. Cancelling the calling task stops before the next folder.
     /// `progress` fires once per finished folder; `activity` reports verification and removal inside the current folder.

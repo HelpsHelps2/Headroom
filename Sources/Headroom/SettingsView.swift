@@ -50,9 +50,11 @@ struct SettingsView: View {
                             setting("Clean automatically", detail: "Deletes eligible output without a review") {
                                 Switch(isOn: model.preferences.scheduled, label: "Clean automatically") { model.requestSchedule(!model.preferences.scheduled) }
                             }
-                            choices("Run every", [6, 12, 24, 48], selected: model.preferences.intervalHours) { model.setInterval($0) }
+                            choices("Clean when unused for", detail: "No builds, installs, or open files for this long",
+                                    [1, 2, 6, 12, 24, 72], selected: model.preferences.keepHours) { model.setKeepHours($0) }
+                            choices("Clean at most every", detail: "Cleans once a folder qualifies, at most this often",
+                                    [1, 2, 6, 12, 24, 48], selected: model.preferences.intervalHours) { model.setInterval($0) }
                                 .disabled(!model.preferences.scheduled).opacity(model.preferences.scheduled ? 1 : 0.5)
-                            choices("Idle at least", [6, 12, 24, 72], selected: model.preferences.keepHours) { model.setKeepHours($0) }
                             setting("Pause", detail: "Keeps watching, stops deleting") {
                                 Switch(isOn: model.preferences.paused, label: "Pause automatic cleanup") { model.togglePaused() }
                             }
@@ -127,16 +129,18 @@ struct SettingsView: View {
         }
     }
 
-    private func choices(_ title: String, _ hours: [Double], selected: Double, action: @escaping (Double) -> Void) -> some View {
-        HStack {
-            Text(title).font(.sans(12, .medium))
-            Spacer()
+    private func choices(_ title: String, detail: String, _ hours: [Double], selected: Double, action: @escaping (Double) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.sans(12, .medium))
+                Text(detail).font(.sans(10.5)).foregroundStyle(theme.muted)
+            }
             HStack(spacing: 0) {
                 ForEach(hours, id: \.self) { value in
                     Button { action(value) } label: {
                         Text(Format.hours(value)).font(.mono(10.5, .medium))
                             .foregroundStyle(selected == value ? theme.ink : theme.muted)
-                            .frame(width: 38, height: 20)
+                            .frame(maxWidth: .infinity).frame(height: 20)
                             .background(selected == value ? theme.segmentOn : .clear, in: RoundedRectangle(cornerRadius: 5))
                             .contentShape(Rectangle())
                     }

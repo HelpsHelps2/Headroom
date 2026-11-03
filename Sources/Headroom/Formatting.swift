@@ -49,7 +49,8 @@ enum Reason {
         ]
         if let match = table.first(where: { reason.hasPrefix($0.0) }) { return match.1 }
         if reason.hasPrefix(Artifact.recentReason) {
-            return "built in the last " + reason.dropFirst(35).replacingOccurrences(of: " hours.", with: " h")
+            let window = reason.dropFirst(Artifact.recentReason.count)
+            return "built in the last " + (window == "hour." ? "1 h" : window.replacingOccurrences(of: " hours.", with: " h"))
         }
         if reason.hasPrefix("Unexpected items in target: ") { return "contains " + reason.dropFirst(28).dropLast() }
         let trimmed = reason.hasSuffix(".") ? String(reason.dropLast()) : reason
