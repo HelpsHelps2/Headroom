@@ -50,15 +50,15 @@ Never touched: `~/.cargo`, sccache, `~/.npm`, `~/.bun`, pnpm and Yarn stores, an
 The **Merged** filter on the Worktrees tab offers a worktree only when every rule passes. Everything else appears under **Kept** with its reason, and **The rules** shows how many worktrees each rule keeps right now. This never runs automatically.
 
 - **Merged:** its commit is in origin's default branch, `main`, `master`, or `staging`, or is part of a pull request merged into one of them. A matching branch name doesn't count. Pull requests are read with your own GitHub CLI (`gh`) when you have it; without it, or offline, only branches are checked and the rest stay.
-- **Nothing uncommitted:** no changed or untracked files.
+- **Nothing uncommitted:** no changed or untracked files, including ones a repository's settings hide from `git status`.
 - **Unused for 7 days:** no file changes, commits, or checkouts. Removing its build output doesn't restart this wait.
 - **Nothing has it open:** no terminal, editor, or running process.
 - **Not protected:** not the main checkout, not marked Always Keep, and not locked in Git.
-- **Nothing else inside:** no other worktree or repository in its folders.
+- **Nothing else inside:** no other worktree or repository in its folders, including ignored ones like build output.
 
 If any check can't finish, the worktree stays.
 
-Removal runs `git worktree remove` without `--force`, after applying every rule again. The branch and commits stay, and History has a **Restore** button that recreates the worktree. Ignored files can't be restored. `.env` and `.env.*` files don't block removal, but the review names them. Build output and test results don't block it either. Other ignored files, such as screenshots, leave the worktree unchecked until you choose it.
+Removal runs `git worktree remove` without `--force`, after applying every rule again. The branch and commits stay, and History has a **Restore** button that recreates the worktree. If nothing else holds a commit, Headroom keeps it with a private `refs/headroom/restore/` ref. Ignored files can't be restored. `.env` and `.env.*` files don't block removal, but the review names them. Build output and test results don't block it either. Other ignored files, such as screenshots, leave the worktree unchecked until you choose it.
 
 ## Using it
 

@@ -245,27 +245,33 @@ public struct WorktreeInspector: Sendable {
         // The scan's list can be older than this check, so Git's current list counts too.
         if (known + repository.registered).contains(where: { $0 != top && Paths.contains(top, $0) }) { return keep(.nestedWorktree, "Contains another worktree") }
 
-        guard let git = try? Command.git(top, ["status", "--porcelain", "--ignored", "-z"], timeout: 60), git.status == 0 else {
+        // Explicit modes: a repository's own settings can hide untracked files and submodule changes from plain `git status`.
+        guard let git = try? Command.git(top, ["status", "--porcelain", "--ignored", "--untracked-files=all", "--ignore-submodules=none", "-z"], timeout: 60), git.status == 0 else {
             return keep(.inspectionFailed, "Couldn't read its Git status")
         }
-        var changed = 0, env: [String] = [], other: [String] = []
+        var changed = 0, env: [String] = [], other: [String] = [], ignoredFolders: [String] = []
         for entry in git.output.components(separatedBy: "\0") where !entry.isEmpty {
             guard entry.hasPrefix("!! ") else { changed += 1; continue }
             let path = String(entry.dropFirst(3))
+            if path.hasSuffix("/") { ignoredFolders.append(String(path.dropLast())) }
             switch WorktreePolicy.classify(path) {
             case .rebuildable: break
             case .env: env.append(path)
             case .other: other.append(path)
             }
         }
+        // `--assume-unchanged` and `--skip-worktree` hide edits from status. Sparse checkouts mark absent files the same way, so those don't count.
+        guard let index = try? Command.git(top, ["ls-files", "-v", "-z"], timeout: 60), index.status == 0 else {
+            return keep(.inspectionFailed, "Couldn't read its Git index")
+        }
+        for entry in index.output.components(separatedBy: "\0") {
+            guard let tag = entry.first, tag.isLowercase || tag == "S" else { continue }
+            if FileManager.default.fileExists(atPath: top + "/" + entry.dropFirst(2)) { changed += 1 }
+        }
         if changed > 0 { return keep(.uncommitted, "\(changed) uncommitted \(changed == 1 ? "change" : "changes")") }
         let merge = mergeState(top: top, head: status.head, branch: status.branch, repository: repository)
         if let (rule, reason) = WorktreePolicy.describe(merge) { return keep(rule, reason) }
         if case .merged(let evidence) = merge { status.evidence = evidence }
-        // A repository inside an ignored folder is real work that `git worktree remove` would delete without complaint.
-        for path in other where path.hasSuffix("/") && Self.containsRepository(top + "/" + String(path.dropLast())) {
-            return keep(.nestedWorktree, "Contains another repository")
-        }
         status.envFiles = env.sorted(); status.otherIgnored = other.sorted()
 
         var measurement: TreeMeasurement
@@ -287,19 +293,45 @@ public struct WorktreeInspector: Sendable {
             let days = max(Int(ceil(wait / 86400)), 1)
             return keep(.recentlyUsed, "Merged, can go in \(days) \(days == 1 ? "day" : "days")")
         }
+        // A repository inside any ignored folder, even build output, is real work that `git worktree remove` would delete
+        // without complaint. This walks large folders, so it runs only for worktrees that passed everything else.
+        for folder in ignoredFolders {
+            switch Self.containsRepository(top + "/" + folder) {
+            case true?: return keep(.nestedWorktree, "Contains another repository")
+            case false?: break
+            case nil: return keep(.inspectionFailed, "Couldn't check its ignored folders")
+            }
+        }
         status.verdict = other.isEmpty ? .ready : .needsLook
         return status
     }
 
-    /// Bounded walk for a nested `.git`. Too many entries counts as found, so an unfinished search keeps the worktree.
-    static func containsRepository(_ path: String) -> Bool {
+    /// `git worktree remove` honors the repository's status settings too, so they are overridden. Never `--force`.
+    static func removeArguments(top: String) -> [String] {
+        ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", top]
+    }
+
+    /// Removing a worktree drops its HEAD, which may be all that holds a squash-merged commit once its branch is gone.
+    /// A private ref keeps that commit from garbage collection so Restore keeps working. Remote branches can be pruned, so only
+    /// local branches, tags, and shared branches count as already holding it.
+    func preserveCommit(top: String, head: String, repository: RepositoryFacts) throws {
+        let holders = ["refs/heads", "refs/tags"] + repository.sharedNames.map { "refs/remotes/origin/\($0)" }
+        let held = try Command.git(top, ["for-each-ref", "--count=1", "--contains", head, "--format=%(refname)"] + holders)
+        guard held.status == 0 else { throw HeadroomError.message("Couldn't check what holds its commit.") }
+        guard held.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let saved = try Command.git(top, ["update-ref", "refs/headroom/restore/\(head)", head])
+        guard saved.status == 0 else { throw HeadroomError.message("Couldn't keep its commit for Restore.") }
+    }
+
+    /// Bounded walk for a nested `.git`. Returns nil when the walk can't finish, which keeps the worktree.
+    static func containsRepository(_ path: String) -> Bool? {
         var stack = [path], visited = 0
         while let directory = stack.popLast() {
-            guard let entries = try? FileInspection.listing(directory) else { return true }
+            guard let entries = try? FileInspection.listing(directory) else { return nil }
             for entry in entries {
                 if entry.name == ".git" { return true }
                 visited += 1
-                if visited > 50_000 { return true }
+                if visited > 2_000_000 { return nil }
                 guard entry.directory else { continue }
                 let child = directory + "/" + entry.name
                 if let value = try? FileInspection.metadata(child), FileInspection.isDirectory(value) { stack.append(child) }

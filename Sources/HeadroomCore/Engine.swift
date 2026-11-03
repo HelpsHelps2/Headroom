@@ -139,12 +139,13 @@ public actor Engine {
                 guard fresh.verdict == .ready || (plan.approvedIgnored.contains(reviewed.top) && Set(fresh.otherIgnored).isSubset(of: reviewed.otherIgnored)) else {
                     throw HeadroomError.message("It has new ignored files since review.")
                 }
+                if let repository { try inspector.preserveCommit(top: fresh.top, head: fresh.head, repository: repository) }
                 let restore = WorktreeRestore(top: fresh.top, common: fresh.common, branch: fresh.branch, head: fresh.head)
                 entry.restore = restore
                 entry.outcome = "Cleaning"; entry.detail = "Removing the worktree."
                 try store.record(entry)
                 // Never --force: Git makes its own check and refuses changes, locks, and submodules.
-                let result = try Command.git(fresh.common, ["worktree", "remove", fresh.top], timeout: 900)
+                let result = try Command.git(fresh.common, WorktreeInspector.removeArguments(top: fresh.top), timeout: 900)
                 guard result.status == 0 else {
                     let exists = FileManager.default.fileExists(atPath: fresh.top + "/.git")
                     entry.outcome = exists ? "Skipped" : "Interrupted"; entry.restore = nil

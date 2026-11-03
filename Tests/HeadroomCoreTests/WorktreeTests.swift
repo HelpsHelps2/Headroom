@@ -173,6 +173,38 @@ final class WorktreeTests: XCTestCase {
         XCTAssertEqual(status[outer.path]?.rule, .nestedWorktree)
         XCTAssertEqual(status[holder.path]?.rule, .nestedWorktree)
     }
+    func testRepositoryInsideBuildOutputKeepsTheWorktree() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("holder"), clean = try f.worktree("clean")
+        let repository = tree.appendingPathComponent("build/other")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        try f.run(repository, "init", "-q")
+        try FileManager.default.createDirectory(at: clean.appendingPathComponent("build/out"), withIntermediateDirectories: true)
+        let status = try await f.survey(try f.engine())
+        XCTAssertEqual(status[tree.path]?.rule, .nestedWorktree, status[tree.path]?.reason ?? "")
+        XCTAssertEqual(status[clean.path]?.verdict, .ready, status[clean.path]?.reason ?? "")
+    }
+    func testHiddenUntrackedFilesAreStillFound() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("hidden")
+        try f.run(f.main, "config", "status.showUntrackedFiles", "no")
+        try Data("work\n".utf8).write(to: tree.appendingPathComponent("new.txt"))
+        let status = try await f.survey(try f.engine())
+        XCTAssertEqual(status[tree.path]?.rule, .uncommitted, status[tree.path]?.reason ?? "")
+    }
+    func testGitRefusesHiddenUntrackedFilesDuringRemoval() throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("hidden")
+        try f.run(f.main, "config", "status.showUntrackedFiles", "no")
+        try Data("work\n".utf8).write(to: tree.appendingPathComponent("new.txt"))
+        let result = try Command.git(f.main.path, WorktreeInspector.removeArguments(top: tree.path))
+        XCTAssertNotEqual(result.status, 0)
+        XCTAssertTrue(f.exists(tree.appendingPathComponent("new.txt")))
+    }
+    func testChangesHiddenFromStatusAreKept() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("assumed")
+        try f.run(tree, "update-index", "--assume-unchanged", "README.md")
+        try Data("changed\n".utf8).write(to: tree.appendingPathComponent("README.md"))
+        let status = try await f.survey(try f.engine())
+        XCTAssertEqual(status[tree.path]?.rule, .uncommitted, status[tree.path]?.reason ?? "")
+    }
     func testPinnedLockedAndInUseAreKept() async throws {
         let f = try RepositoryFixture()
         let pinned = try f.worktree("pinned"), locked = try f.worktree("locked"), used = try f.worktree("used")
@@ -266,6 +298,35 @@ final class WorktreeTests: XCTestCase {
         let history = try await engine.history()
         try await engine.restoreWorktree(try XCTUnwrap(history.first?.restore))
         XCTAssertTrue(f.exists(tree.appendingPathComponent("README.md")))
+    }
+    func testUnreferencedCommitSurvivesGarbageCollectionForRestore() async throws {
+        let f = try RepositoryFixture(), source = try f.worktree("feature", commits: 2, push: true)
+        let head = try f.head(source)
+        let tree = f.trees.appendingPathComponent("detached")
+        try f.run(f.main, "worktree", "add", "-q", "--detach", tree.path, head)
+        // The squash-merged source branch is deleted everywhere, leaving only this worktree's HEAD holding the commit.
+        try f.run(f.main, "worktree", "remove", source.path)
+        try f.run(f.main, "branch", "-q", "-D", "feature")
+        try f.run(f.main, "push", "-q", "origin", "--delete", "feature")
+        try f.run(f.main, "fetch", "-q", "--prune")
+        let pull = PullRequest(number: 3, state: "MERGED", headRefName: "feature", headRefOid: head, baseRefName: "main")
+        let engine = try f.engine(pullRequests: [pull])
+        let status = try await f.survey(engine)
+        XCTAssertEqual(status[tree.path]?.verdict, .ready, status[tree.path]?.reason ?? "")
+        let entries = try await engine.removeWorktrees(try await engine.planWorktreeRemoval(tops: [tree.path]))
+        XCTAssertEqual(entries.first?.outcome, "Cleaned", entries.first?.detail ?? "")
+        try f.run(f.main, "reflog", "expire", "--expire=now", "--all")
+        try f.run(f.main, "gc", "-q", "--prune=now")
+        let history = try await engine.history()
+        try await engine.restoreWorktree(try XCTUnwrap(history.first?.restore))
+        XCTAssertEqual(try f.head(tree), head)
+    }
+    func testNoRecoveryReferenceWhenTheBranchHoldsTheCommit() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("done")
+        let engine = try f.engine()
+        _ = try await f.survey(engine)
+        _ = try await engine.removeWorktrees(try await engine.planWorktreeRemoval(tops: [tree.path]))
+        XCTAssertEqual(try f.run(f.main, "for-each-ref", "refs/headroom"), "")
     }
     func testRemovalChecksAgainAndKeepsChangesMadeAfterReview() async throws {
         let f = try RepositoryFixture(), dirty = try f.worktree("dirty"), moved = try f.worktree("moved"), locked = try f.worktree("locked")
