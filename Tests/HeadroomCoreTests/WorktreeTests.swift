@@ -183,6 +183,20 @@ final class WorktreeTests: XCTestCase {
         XCTAssertEqual(status[tree.path]?.rule, .nestedWorktree, status[tree.path]?.reason ?? "")
         XCTAssertEqual(status[clean.path]?.verdict, .ready, status[clean.path]?.reason ?? "")
     }
+    func testRepositoryInsideATrackedFolderKeepsTheWorktree() async throws {
+        let f = try RepositoryFixture()
+        let folder = f.main.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("tracked\n".utf8).write(to: folder.appendingPathComponent("file.txt"))
+        try f.run(f.main, "add", "."); try f.commit(f.main, "add src"); try f.run(f.main, "push", "-q")
+        let tree = try f.worktree("holder"), plain = try f.worktree("plain")
+        let nested = tree.appendingPathComponent("src")
+        try f.run(nested, "init", "-q")
+        try f.run(nested, "add", "."); try f.commit(nested, "local only history")
+        let status = try await f.survey(try f.engine())
+        XCTAssertEqual(status[tree.path]?.rule, .nestedWorktree, status[tree.path]?.reason ?? "")
+        XCTAssertEqual(status[plain.path]?.verdict, .ready, status[plain.path]?.reason ?? "")
+    }
     func testBareRepositoryInsideBuildOutputKeepsTheWorktree() async throws {
         let f = try RepositoryFixture(), direct = try f.worktree("direct"), deeper = try f.worktree("deeper")
         for bare in [direct.appendingPathComponent("build/local.git"), deeper.appendingPathComponent("build/a/b/local.git")] {
@@ -256,6 +270,19 @@ final class WorktreeTests: XCTestCase {
         try FileManager.default.removeItem(at: directory.appendingPathComponent("target")) // Moves the directory's own time, not the file's.
         let measured = try FileInspection.measure(directory.path)
         XCTAssertEqual(measured.latestFileWrite.timeIntervalSince1970, old.timeIntervalSince1970, accuracy: 1)
+    }
+    func testRepositorySearchIgnoresTheWorktreesOwnGitFileAndLookalikes() throws {
+        let base = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("headroom-search-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let fm = FileManager.default
+        for folder in ["fixtures/objects", "fixtures/refs"] { try fm.createDirectory(at: base.appendingPathComponent(folder), withIntermediateDirectories: true) }
+        try Data("gitdir: elsewhere\n".utf8).write(to: base.appendingPathComponent(".git"))
+        XCTAssertEqual(WorktreeInspector.containsRepository(base.path), false)
+        try fm.createDirectory(at: base.appendingPathComponent("fixtures/HEAD"), withIntermediateDirectories: true)
+        XCTAssertEqual(WorktreeInspector.containsRepository(base.path), false, "A folder named HEAD isn't a repository")
+        try fm.removeItem(at: base.appendingPathComponent("fixtures/HEAD"))
+        try Data("ref: refs/heads/main\n".utf8).write(to: base.appendingPathComponent("fixtures/HEAD"))
+        XCTAssertEqual(WorktreeInspector.containsRepository(base.path), true)
     }
     func testIgnoredPathClassification() {
         XCTAssertEqual(WorktreePolicy.classify("apps/web/.env.local"), .env)
@@ -437,7 +464,7 @@ final class WorktreeTests: XCTestCase {
         _ = try await engine.runScheduleIfDue()
         XCTAssertTrue(f.exists(tree))
     }
-    func testGitRefusesSubmodulesWithoutForce() async throws {
+    func testSubmodulesKeepTheWorktreeAndGitRefusesThemToo() async throws {
         let f = try RepositoryFixture()
         let library = f.base.appendingPathComponent("library.git")
         try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
@@ -450,10 +477,9 @@ final class WorktreeTests: XCTestCase {
         let tree = f.trees.appendingPathComponent("with-submodule")
         try f.run(f.main, "worktree", "add", "-q", "--detach", tree.path, "origin/main")
         _ = try Command.git(tree.path, ["-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q"])
-        let engine = try f.engine()
-        _ = try await f.survey(engine)
-        let entries = try await engine.removeWorktrees(try await engine.planWorktreeRemoval(tops: [tree.path]))
-        XCTAssertEqual(entries.first?.outcome, "Skipped", entries.first?.detail ?? "")
+        let status = try await f.survey(try f.engine())
+        XCTAssertEqual(status[tree.path]?.rule, .nestedWorktree, status[tree.path]?.reason ?? "")
+        XCTAssertNotEqual(try Command.git(f.main.path, WorktreeInspector.removeArguments(top: tree.path)).status, 0)
         XCTAssertTrue(f.exists(tree.appendingPathComponent("README.md")))
     }
 }

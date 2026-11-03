@@ -246,15 +246,14 @@ public struct WorktreeInspector: Sendable {
         if (known + repository.registered).contains(where: { $0 != top && Paths.contains(top, $0) }) { return keep(.nestedWorktree, "Contains another worktree") }
 
         // Explicit modes: a repository's own settings can hide untracked files and submodule changes from plain `git status`.
-        // `normal`, not `all`: `all` lists ignored folders file by file, and the repository search below needs them as folders.
+        // `normal`, not `all`: `all` lists ignored folders file by file, and the review should name them as folders.
         guard let git = try? Command.git(top, ["status", "--porcelain", "--ignored", "--untracked-files=normal", "--ignore-submodules=none", "-z"], timeout: 60), git.status == 0 else {
             return keep(.inspectionFailed, "Couldn't read its Git status")
         }
-        var changed = 0, env: [String] = [], other: [String] = [], ignoredFolders: [String] = []
+        var changed = 0, env: [String] = [], other: [String] = []
         for entry in git.output.components(separatedBy: "\0") where !entry.isEmpty {
             guard entry.hasPrefix("!! ") else { changed += 1; continue }
             let path = String(entry.dropFirst(3))
-            if path.hasSuffix("/") { ignoredFolders.append(String(path.dropLast())) }
             switch WorktreePolicy.classify(path) {
             case .rebuildable: break
             case .env: env.append(path)
@@ -294,14 +293,12 @@ public struct WorktreeInspector: Sendable {
             let days = max(Int(ceil(wait / 86400)), 1)
             return keep(.recentlyUsed, "Merged, can go in \(days) \(days == 1 ? "day" : "days")")
         }
-        // A repository inside any ignored folder, even build output, is real work that `git worktree remove` would delete
-        // without complaint. This walks large folders, so it runs only for worktrees that passed everything else.
-        for folder in ignoredFolders {
-            switch Self.containsRepository(top + "/" + folder) {
-            case true?: return keep(.nestedWorktree, "Contains another repository")
-            case false?: break
-            case nil: return keep(.inspectionFailed, "Couldn't check its ignored folders")
-            }
+        // A repository anywhere inside is real work that `git worktree remove` would delete without complaint, and Git's
+        // status can't be relied on to show it. This walks everything, so it runs only for worktrees that passed the rest.
+        switch Self.containsRepository(top) {
+        case true?: return keep(.nestedWorktree, "Contains another repository")
+        case false?: break
+        case nil: return keep(.inspectionFailed, "Couldn't check its folders")
         }
         status.verdict = other.isEmpty ? .ready : .needsLook
         return status
@@ -324,19 +321,23 @@ public struct WorktreeInspector: Sendable {
         guard saved.status == 0 else { throw HeadroomError.message("Couldn't keep its commit for Restore.") }
     }
 
-    /// Bounded walk for a nested `.git`. Returns nil when the walk can't finish, which keeps the worktree.
-    static func containsRepository(_ path: String) -> Bool? {
-        var stack = [path], visited = 0
+    /// Bounded walk of a worktree for a nested `.git` or bare repository, past its own `.git` file. Links aren't followed.
+    /// Returns nil when the walk can't finish, which keeps the worktree.
+    static func containsRepository(_ top: String) -> Bool? {
+        var stack = [top], visited = 0
         while let directory = stack.popLast() {
             guard let entries = try? FileInspection.listing(directory) else { return nil }
-            // A bare repository has no `.git`. These three are what Git itself looks for.
-            let names = Set(entries.map(\.name))
-            if names.contains("HEAD"), names.contains("objects"), names.contains("refs") { return true }
+            if directory != top {
+                if entries.contains(where: { $0.name == ".git" }) { return true }
+                // A bare repository has no `.git`. These three are what Git itself looks for.
+                if entries.contains(where: { $0.name == "HEAD" && !$0.directory }),
+                   entries.contains(where: { $0.name == "objects" && $0.directory }),
+                   entries.contains(where: { $0.name == "refs" && $0.directory }) { return true }
+            }
             for entry in entries {
-                if entry.name == ".git" { return true }
                 visited += 1
                 if visited > 2_000_000 { return nil }
-                guard entry.directory else { continue }
+                guard entry.directory, !(directory == top && entry.name == ".git") else { continue }
                 let child = directory + "/" + entry.name
                 if let value = try? FileInspection.metadata(child), FileInspection.isDirectory(value) { stack.append(child) }
             }

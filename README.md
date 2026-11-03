@@ -54,7 +54,7 @@ The **Merged** filter on the Worktrees tab offers a worktree only when every rul
 - **Unused for 7 days:** no file changes, commits, or checkouts. Removing its build output doesn't restart this wait.
 - **Nothing has it open:** no terminal, editor, or running process.
 - **Not protected:** not the main checkout, not marked Always Keep, and not locked in Git.
-- **Nothing else inside:** no other worktree or repository in its folders, including ignored ones like build output.
+- **Nothing else inside:** no other worktree, repository, or submodule anywhere in its folders, including ignored ones like build output.
 
 If any check can't finish, the worktree stays.
 
