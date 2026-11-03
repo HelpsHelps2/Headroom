@@ -246,7 +246,8 @@ public struct WorktreeInspector: Sendable {
         if (known + repository.registered).contains(where: { $0 != top && Paths.contains(top, $0) }) { return keep(.nestedWorktree, "Contains another worktree") }
 
         // Explicit modes: a repository's own settings can hide untracked files and submodule changes from plain `git status`.
-        guard let git = try? Command.git(top, ["status", "--porcelain", "--ignored", "--untracked-files=all", "--ignore-submodules=none", "-z"], timeout: 60), git.status == 0 else {
+        // `normal`, not `all`: `all` lists ignored folders file by file, and the repository search below needs them as folders.
+        guard let git = try? Command.git(top, ["status", "--porcelain", "--ignored", "--untracked-files=normal", "--ignore-submodules=none", "-z"], timeout: 60), git.status == 0 else {
             return keep(.inspectionFailed, "Couldn't read its Git status")
         }
         var changed = 0, env: [String] = [], other: [String] = [], ignoredFolders: [String] = []
@@ -328,6 +329,9 @@ public struct WorktreeInspector: Sendable {
         var stack = [path], visited = 0
         while let directory = stack.popLast() {
             guard let entries = try? FileInspection.listing(directory) else { return nil }
+            // A bare repository has no `.git`. These three are what Git itself looks for.
+            let names = Set(entries.map(\.name))
+            if names.contains("HEAD"), names.contains("objects"), names.contains("refs") { return true }
             for entry in entries {
                 if entry.name == ".git" { return true }
                 visited += 1

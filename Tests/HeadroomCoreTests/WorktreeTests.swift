@@ -183,6 +183,23 @@ final class WorktreeTests: XCTestCase {
         XCTAssertEqual(status[tree.path]?.rule, .nestedWorktree, status[tree.path]?.reason ?? "")
         XCTAssertEqual(status[clean.path]?.verdict, .ready, status[clean.path]?.reason ?? "")
     }
+    func testBareRepositoryInsideBuildOutputKeepsTheWorktree() async throws {
+        let f = try RepositoryFixture(), direct = try f.worktree("direct"), deeper = try f.worktree("deeper")
+        for bare in [direct.appendingPathComponent("build/local.git"), deeper.appendingPathComponent("build/a/b/local.git")] {
+            try FileManager.default.createDirectory(at: bare, withIntermediateDirectories: true)
+            try f.run(bare, "init", "-q", "--bare")
+        }
+        let status = try await f.survey(try f.engine())
+        XCTAssertEqual(status[direct.path]?.rule, .nestedWorktree, status[direct.path]?.reason ?? "")
+        XCTAssertEqual(status[deeper.path]?.rule, .nestedWorktree, status[deeper.path]?.reason ?? "")
+    }
+    func testIgnoredFoldersAreListedAsFolders() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("notes")
+        try FileManager.default.createDirectory(at: tree.appendingPathComponent("notes/deep"), withIntermediateDirectories: true)
+        for name in ["a.md", "deep/b.md"] { try Data("x".utf8).write(to: tree.appendingPathComponent("notes/" + name)) }
+        let status = try await f.survey(try f.engine())
+        XCTAssertEqual(status[tree.path]?.otherIgnored, ["notes/"])
+    }
     func testHiddenUntrackedFilesAreStillFound() async throws {
         let f = try RepositoryFixture(), tree = try f.worktree("hidden")
         try f.run(f.main, "config", "status.showUntrackedFiles", "no")
