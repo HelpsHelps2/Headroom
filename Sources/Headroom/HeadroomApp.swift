@@ -79,6 +79,9 @@ private struct Screens: View {
                 case .review: ReviewView().transition(.move(edge: .bottom).combined(with: .opacity))
                 case .sweep: SweepView().transition(.opacity)
                 case .settings: SettingsView().transition(.move(edge: .trailing).combined(with: .opacity))
+                case .worktreeRules: WorktreeRulesView().transition(.move(edge: .trailing).combined(with: .opacity))
+                case .worktreeReview: WorktreeReviewView().transition(.move(edge: .bottom).combined(with: .opacity))
+                case .worktreeRemoval: WorktreeRemovalView().transition(.opacity)
                 }
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.9), value: model.tab)
@@ -236,14 +239,17 @@ enum Snapshots {
                     model.selected = Set(model.repositoryGroups.filter { $0.waiting || $0.name == "spike/sqlite-wal" }.map(\.top))
                 }),
                 ("2-review-selected", 0.9, { model.reviewSelection() }),
-                ("2-scanning", 0.5, { model.screen = .main; model.selected = []; model.repository = nil; model.scanning = true }),
+                ("2-merged", 0.8, { model.screen = .main; model.selected = []; model.repository = nil; model.worktreeFilter = .merged; model.tab = .worktrees }),
+                ("2-merged-rules", 0.8, { model.screen = .worktreeRules }),
+                ("2-merged-review", 0.9, { model.screen = .main; model.openWorktreeReview() }),
+                ("2-scanning", 0.5, { model.worktreeFilter = .all;  model.screen = .main; model.selected = []; model.repository = nil; model.scanning = true }),
                 ("3-history", 0.8, { model.tab = .history }),
                 ("4-review", 0.9, { model.tab = .disk; model.openReview(model.visible); if model.demo { model.toggleExcluded(model.review[2]) } }),
                 ("5-sweep", 3.2, { model.startSweep() }),
                 ("6-done", 0.8, { model.stopSweep() }),
                 ("7-settings", 0.9, { model.sweep = nil; model.screen = .settings }),
             ]
-            for (name, wait, apply) in steps where model.demo || !["1-recent-only", "2-selected", "2-review-selected", "2-scanning", "5-sweep", "6-done"].contains(name) {
+            for (name, wait, apply) in steps where model.demo || !["1-recent-only", "2-selected", "2-review-selected", "2-merged-review", "2-scanning", "5-sweep", "6-done"].contains(name) {
                 apply()
                 try? await Task.sleep(for: .seconds(wait))
                 capture(to: "\(directory)/\(name)-\(appearance).png")

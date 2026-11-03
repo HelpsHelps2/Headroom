@@ -37,4 +37,6 @@ Scheduled eligibility and deletion are covered with an injected clock and real f
 
 Each scan re-measures every candidate folder (about 2.6 million files in the inventory above). With automatic cleanup on, this repeats every five minutes at utility priority so observations stay continuous. Discovery results are cached between scans. Event-driven change detection would reduce this cost further and is not implemented.
 
+Whole-worktree rules and removal are covered with real temporary Git repositories, a local origin, and an injected pull request list: merge evidence, stacked and reused branches, changes after review, nested worktrees and repositories, submodules, ignored files, and restore. The report was run read-only against real worktrees with `headroom-cli worktrees`. Removal has not been run against real worktrees, and how agent tools react when a worktree they recorded disappears has not been tested.
+
 Estimated allocated bytes are shown. Observation-based protection cannot exclude a process that starts after the final check.

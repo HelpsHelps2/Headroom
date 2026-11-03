@@ -91,9 +91,12 @@ public struct Inventory: Codable, Sendable {
     public var available: Int64
     public var protectedCaches: [String]
     public var volume: String
-    public init(artifacts: [Artifact], issues: [String], scannedAt: Date, capacity: Int64, available: Int64, protectedCaches: [String], volume: String = "") {
+    /// Every Git worktree found, including ones with no build output: top → scan root.
+    public var worktrees: [String: String]
+    public init(artifacts: [Artifact], issues: [String], scannedAt: Date, capacity: Int64, available: Int64, protectedCaches: [String], volume: String = "", worktrees: [String: String] = [:]) {
         self.artifacts = artifacts; self.issues = issues; self.scannedAt = scannedAt
         self.capacity = capacity; self.available = available; self.protectedCaches = protectedCaches; self.volume = volume
+        self.worktrees = worktrees
     }
     public static let empty = Inventory(artifacts: [], issues: [], scannedAt: .distantPast, capacity: 0, available: 0, protectedCaches: [])
 }
@@ -127,9 +130,11 @@ public struct HistoryEntry: Codable, Identifiable, Sendable {
     /// Groups the entries of one cleanup plan.
     public var run: String
     public var automatic: Bool
-    public init(id: String, date: Date, path: String, outcome: String, detail: String, bytes: Int64, run: String, automatic: Bool) {
+    /// Set when this entry removed a whole worktree.
+    public var restore: WorktreeRestore?
+    public init(id: String, date: Date, path: String, outcome: String, detail: String, bytes: Int64, run: String, automatic: Bool, restore: WorktreeRestore? = nil) {
         self.id = id; self.date = date; self.path = path; self.outcome = outcome
-        self.detail = detail; self.bytes = bytes; self.run = run; self.automatic = automatic
+        self.detail = detail; self.bytes = bytes; self.run = run; self.automatic = automatic; self.restore = restore
     }
 }
 

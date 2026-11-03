@@ -4,8 +4,8 @@ import HeadroomCore
 @main
 struct HeadroomCLI {
     static let usage = """
-    headroom-cli scan [folder ...] | history | clean --yes [--now] /absolute/project/node_modules ...
-    Read-only by default. Uses the same protections and state as the Mac app.
+    headroom-cli scan [folder ...] | worktrees [folder ...] | history | clean --yes [--now] /absolute/project/node_modules ...
+    Read-only by default. `worktrees` reports which whole worktrees can go and why the others stay; removing them happens in the app. Uses the same protections and state as the Mac app.
     --now also removes output written within the keep window. Every other protection still applies.
     Set HEADROOM_STATE_DIR to use a separate inventory database.
     """
@@ -13,19 +13,20 @@ struct HeadroomCLI {
     static func main() async {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
-            guard let command = args.first, ["scan", "history", "clean"].contains(command) else { print(usage); return }
+            guard let command = args.first, ["scan", "worktrees", "history", "clean"].contains(command) else { print(usage); return }
             let engine = try Engine()
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
             if command == "history" {
                 print(String(decoding: try encoder.encode(await engine.history()), as: UTF8.self)); return
             }
-            if command == "scan", args.count > 1 {
+            if command == "scan" || command == "worktrees", args.count > 1 {
                 var preferences = try await engine.preferences()
                 preferences.roots = args.dropFirst().map { WatchedRoot(path: $0) }
                 try await engine.save(preferences)
             }
             let inventory = try await engine.scan()
             if command == "scan" { print(String(decoding: try encoder.encode(inventory), as: UTF8.self)); return }
+            if command == "worktrees" { print(String(decoding: try encoder.encode(try await engine.surveyWorktrees()), as: UTF8.self)); return }
             let paths = args.dropFirst().filter { $0 != "--yes" && $0 != "--now" }
             guard args.contains("--yes"), !paths.isEmpty, paths.allSatisfy({ $0.hasPrefix("/") }) else {
                 throw HeadroomError.message("Permanent deletion requires: clean --yes /absolute/path ... Add its scan root in the app first.")

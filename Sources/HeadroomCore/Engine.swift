@@ -8,6 +8,8 @@ public actor Engine {
     private let clock: @Sendable () -> Date
     private var inventory = Inventory.empty
     private let discovery = DiscoveryCache()
+    private let inspector: WorktreeInspector
+    private var worktrees: [WorktreeStatus] = []
     /// Times the Mac slept while this process kept running. Nothing can use a folder then, so these do not break observation.
     private var sleeps: [DateInterval] = []
     /// Longest unobserved awake stretch that keeps an observation continuous.
@@ -16,9 +18,11 @@ public actor Engine {
     public init(directory: URL = Paths.defaultState,
                 home: String = FileManager.default.homeDirectoryForCurrentUser.path,
                 activity: @escaping @Sendable () -> ActivitySnapshot = { ActivitySnapshot.capture() },
-                clock: @escaping @Sendable () -> Date = { Date() }) throws {
+                clock: @escaping @Sendable () -> Date = { Date() },
+                pullRequests: PullRequestCache = PullRequestCache()) throws {
         self.directory = directory; self.store = try StateStore(directory: directory)
         self.scanner = Scanner(home: home); self.activityProvider = activity; self.clock = clock
+        self.inspector = WorktreeInspector(pullRequests: pullRequests)
     }
     public func preferences() throws -> Preferences { try store.preferences() }
     public func save(_ preferences: Preferences) throws {
@@ -94,6 +98,91 @@ public actor Engine {
         defer { withExtendedLifetime(lease) {} }
         return try store.scheduleDue(now: clock(), interval: interval, ready: ready)
     }
+    // MARK: Whole worktrees
+
+    /// Applies the worktree rules to everything the last scan found. Read-only, and off the actor so scans can continue meanwhile.
+    public func surveyWorktrees() async throws -> [WorktreeStatus] {
+        let roots = inventory.worktrees
+        guard !roots.isEmpty else { return worktrees }
+        let preferences = try store.preferences(), artifacts = inventory.artifacts, now = clock()
+        let activity = activityProvider(), inspector = self.inspector
+        let result = await Task.detached(priority: .utility) {
+            inspector.survey(roots: roots, preferences: preferences, activity: activity, artifacts: artifacts, now: now)
+        }.value
+        worktrees = result
+        return result
+    }
+    /// There is deliberately no automatic path to this: removing a worktree always follows a person's review.
+    public func planWorktreeRemoval(tops: Set<String>, approvingIgnored: Set<String> = []) throws -> WorktreeRemovalPlan {
+        let candidates = worktrees.filter { tops.contains($0.top) && ($0.verdict == .ready || ($0.verdict == .needsLook && approvingIgnored.contains($0.top))) }
+        guard !candidates.isEmpty else { throw HeadroomError.message("No selected worktree can be removed. Scan again and review the reasons.") }
+        return .init(candidates: candidates, approvedIgnored: approvingIgnored.intersection(tops))
+    }
+    /// Removes reviewed worktrees one at a time, applying every rule again immediately before each one.
+    public func removeWorktrees(_ plan: WorktreeRemovalPlan, progress: (@Sendable (HistoryEntry) -> Void)? = nil) throws -> [HistoryEntry] {
+        let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)
+        defer { withExtendedLifetime(lease) {} }
+        let preferences = try store.preferences(), run = UUID().uuidString, known = Array(inventory.worktrees.keys)
+        var entries: [HistoryEntry] = []
+        for reviewed in plan.candidates {
+            if Task<Never, Never>.isCancelled { break }
+            var entry = HistoryEntry(id: UUID().uuidString, date: clock(), path: reviewed.top, outcome: "Skipped", detail: "", bytes: 0, run: run, automatic: false)
+            do {
+                guard preferences.roots.contains(where: { $0.path == reviewed.root && Paths.contains($0.path, reviewed.top) }) else {
+                    throw HeadroomError.message("Worktree is outside its approved scan root.")
+                }
+                let repository = inspector.repository(top: reviewed.top, now: clock())
+                let fresh = inspector.inspect(top: reviewed.top, root: reviewed.root, repository: repository, preferences: preferences,
+                                              activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock())
+                guard fresh.verdict != .kept else { throw HeadroomError.message(fresh.reason ?? "It no longer meets the rules.") }
+                guard fresh.head == reviewed.head else { throw HeadroomError.message("Its commit changed since review.") }
+                guard fresh.verdict == .ready || (plan.approvedIgnored.contains(reviewed.top) && Set(fresh.otherIgnored).isSubset(of: reviewed.otherIgnored)) else {
+                    throw HeadroomError.message("It has new ignored files since review.")
+                }
+                let restore = WorktreeRestore(top: fresh.top, common: fresh.common, branch: fresh.branch, head: fresh.head)
+                entry.restore = restore
+                entry.outcome = "Cleaning"; entry.detail = "Removing the worktree."
+                try store.record(entry)
+                // Never --force: Git makes its own check and refuses changes, locks, and submodules.
+                let result = try Command.git(fresh.common, ["worktree", "remove", fresh.top], timeout: 900)
+                guard result.status == 0 else {
+                    let exists = FileManager.default.fileExists(atPath: fresh.top + "/.git")
+                    entry.outcome = exists ? "Skipped" : "Interrupted"; entry.restore = nil
+                    throw HeadroomError.message(result.error.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                entry.outcome = "Cleaned"; entry.bytes = fresh.bytes
+                var detail = fresh.branch.map { "Worktree removed. Branch \($0) stays." } ?? "Worktree removed. Its commit stays in the repository."
+                let gone = fresh.envFiles + fresh.otherIgnored
+                if !gone.isEmpty { detail += " Also removed: \(gone.joined(separator: ", "))." }
+                entry.detail = detail
+            } catch {
+                if entry.outcome == "Cleaning" { entry.outcome = "Interrupted" }
+                entry.detail = error.localizedDescription
+            }
+            try store.record(entry); entries.append(entry)
+            progress?(entry)
+        }
+        worktrees.removeAll { status in entries.contains { $0.path == status.top && $0.outcome == "Cleaned" } }
+        inventory = .empty
+        if let space = try? FileManager.default.attributesOfFileSystem(forPath: plan.candidates.first?.root ?? "/") {
+            try? store.recordSpace(.init(date: clock(), capacity: (space[.systemSize] as? NSNumber)?.int64Value ?? 0,
+                                         available: (space[.systemFreeSize] as? NSNumber)?.int64Value ?? 0))
+        }
+        return entries
+    }
+    /// Recreates a removed worktree from its branch, or at its commit if the branch is gone. Ignored files do not come back.
+    public func restoreWorktree(_ restore: WorktreeRestore) throws {
+        let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)
+        defer { withExtendedLifetime(lease) {} }
+        guard !FileManager.default.fileExists(atPath: restore.top) else { throw HeadroomError.message("Something already exists at \(restore.top).") }
+        var arguments = ["worktree", "add", "--detach", restore.top, restore.head]
+        if let branch = restore.branch, try Command.git(restore.common, ["rev-parse", "-q", "--verify", "refs/heads/\(branch)"]).status == 0 {
+            arguments = ["worktree", "add", restore.top, branch]
+        }
+        let result = try Command.git(restore.common, arguments, timeout: 600)
+        guard result.status == 0 else { throw HeadroomError.message(result.error.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
     /// Runs a reviewed plan one folder at a time. Cancelling the calling task stops before the next folder.
     /// `progress` fires once per finished folder; `activity` reports verification and removal inside the current folder.
     public func execute(_ plan: CleanupPlan, progress: (@Sendable (HistoryEntry) -> Void)? = nil,

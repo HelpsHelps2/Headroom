@@ -4,7 +4,7 @@
 [![CI](https://github.com/HelpsHelps2/Headroom/actions/workflows/ci.yml/badge.svg)](https://github.com/HelpsHelps2/Headroom/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/HelpsHelps2/Headroom)](https://github.com/HelpsHelps2/Headroom/releases/latest)
 
-Headroom finds stale build output across your repositories and agent worktrees and gives the space back. It removes `node_modules` and Cargo `target` folders from worktrees nobody is using, and leaves source, branches, lockfiles, worktrees, and shared compiler and package caches alone.
+Headroom finds stale build output across your repositories and agent worktrees and gives the space back. It removes `node_modules` and Cargo `target` folders from worktrees nobody is using, and leaves source, branches, lockfiles, and shared compiler and package caches alone. It can also remove whole worktrees whose work is already merged, always after your review.
 
 It is a native Mac menu bar utility with one narrow window: a disk ring, one button, and a review of exactly what will be deleted.
 
@@ -45,6 +45,21 @@ A folder is eligible only when every check passes. Otherwise it is kept and the 
 
 Never touched: `~/.cargo`, sccache, `~/.npm`, `~/.bun`, pnpm and Yarn stores, and any path in the matching environment variables.
 
+## What can remove a whole worktree
+
+The **Merged** filter on the Worktrees tab offers a worktree only when every rule passes. Everything else appears under **Kept** with its reason, and **The rules** shows how many worktrees each rule keeps right now. This never runs automatically.
+
+- **Merged:** its commit is in origin's default branch, `main`, `master`, or `staging`, or is part of a pull request merged into one of them. A matching branch name doesn't count. Pull requests are read with your own GitHub CLI (`gh`) when you have it; without it, or offline, only branches are checked and the rest stay.
+- **Nothing uncommitted:** no changed or untracked files.
+- **Unused for 7 days:** no file changes, commits, or checkouts. Removing its build output doesn't restart this wait.
+- **Nothing has it open:** no terminal, editor, or running process.
+- **Not protected:** not the main checkout, not marked Always Keep, and not locked in Git.
+- **Nothing else inside:** no other worktree or repository in its folders.
+
+If any check can't finish, the worktree stays.
+
+Removal runs `git worktree remove` without `--force`, after applying every rule again. The branch and commits stay, and History has a **Restore** button that recreates the worktree. Ignored files can't be restored. `.env` and `.env.*` files don't block removal, but the review names them. Build output and test results don't block it either. Other ignored files, such as screenshots, leave the worktree unchecked until you choose it.
+
 ## Using it
 
 - **Scanning:** the arrow at the top left spins while Headroom scans. Click it, or press ⌘R, to scan now.
@@ -54,7 +69,7 @@ Never touched: `~/.cargo`, sccache, `~/.npm`, `~/.bun`, pnpm and Yarn stores, an
 - **Sweeping:** folders are removed one at a time. A folder that becomes active mid-run is skipped. **Stop after this folder** stops between folders.
 - **History:** space reclaimed this month, free space over 14 days, and every run with what it skipped.
 - **Updates:** Headroom checks for a new version once a day and installs it in the background when it is idle. Each update must be signed with the project's update key and the same Developer ID. Turn automatic installs off, or check now, in Settings.
-- **Automatic cleanup:** off by default. Turning it on asks for confirmation, then deletes eligible folders every 24 hours (configurable) without a review, in watched folders marked automatic. It requires continuous observations no more than ten minutes apart, so Headroom rescans every five minutes while it is on, at background priority; otherwise it rescans every 30 minutes and when you open the window.
+- **Automatic cleanup:** off by default. Turning it on asks for confirmation, then deletes eligible build output without a review, in watched folders marked automatic, once nothing has built, installed, or opened files in the project for the time you choose. It cleans at most as often as you choose, and never removes whole worktrees. It requires observations no more than ten minutes apart while the Mac is awake, so Headroom rescans every five minutes while it is on, at background priority; otherwise it rescans every 30 minutes and when you open the window.
 
 Deletion is permanent. Expect to run `npm install` (or your package manager) or a fresh build in a cleaned worktree. Sizes are allocated-size estimates; APFS clones and snapshots can make actual freed space differ.
 
@@ -64,11 +79,12 @@ The bundled `headroom-cli` uses the same inventory, protections, and history as 
 
 ```sh
 dist/Headroom.app/Contents/MacOS/headroom-cli scan
+dist/Headroom.app/Contents/MacOS/headroom-cli worktrees
 dist/Headroom.app/Contents/MacOS/headroom-cli history
 dist/Headroom.app/Contents/MacOS/headroom-cli clean --yes /absolute/path/node_modules /absolute/path/target
 ```
 
-`scan [folder ...]` replaces the watched folders with manual-only ones. Set `HEADROOM_STATE_DIR` to use a separate database, for example to inspect folders read-only without changing the app's settings.
+`scan [folder ...]` replaces the watched folders with manual-only ones. `worktrees [folder ...]` does the same and reports each worktree's verdict and reason; removing them happens in the app. Set `HEADROOM_STATE_DIR` to use a separate database, for example to inspect folders read-only without changing the app's settings.
 
 ## Limits
 

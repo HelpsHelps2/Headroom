@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Remove whole worktrees whose work is already merged. The new **Merged** filter on the Worktrees tab offers one only when its commits are in the default branch, `main`, or `staging`, or part of a pull request merged into one of them; it has no uncommitted changes; and nothing has used it for 7 days. Removal always follows your review and never runs automatically.
+- Every worktree Headroom keeps is listed with its reason, and **The rules** shows each rule with how many worktrees it keeps right now.
+- Branches and commits stay. History has a **Restore** button that recreates a removed worktree. Ignored files can't be restored: the review names `.env` files, and worktrees with other ignored files start unchecked.
+- A worktree holding another worktree or repository in its folders stays.
+- Merged pull requests are read with your own GitHub CLI (`gh`) if you have it. Without it, or offline, only branches are checked and the rest stay.
+- `headroom-cli worktrees` reports each worktree's verdict and reason.
+
 ## 0.3.2
 
 - Automatic cleanup runs much more often. Waiting for a folder to go unused and watching it for activity now happen at the same time, so a folder is cleaned about one wait after its last use instead of two.

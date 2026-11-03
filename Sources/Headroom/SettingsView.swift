@@ -72,7 +72,7 @@ struct SettingsView: View {
                     if Updates.shared.enabled { updatesCard }
                     SectionLabel(text: "Never touched").padding(.top, 10)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Source, branches, lockfiles, and whole worktrees. Shared caches:")
+                        Text("Source, branches, and lockfiles, unless you review and remove a merged worktree. Shared caches:")
                             .font(.sans(11)).foregroundStyle(theme.muted).padding(.bottom, 2)
                         ForEach(model.inventory.protectedCaches.isEmpty ? defaultCaches : model.inventory.protectedCaches, id: \.self) {
                             Text(Format.home($0)).font(.mono(10.5)).foregroundStyle(theme.dim)
