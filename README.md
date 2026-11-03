@@ -1,5 +1,9 @@
 # Headroom
 
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/HelpsHelps2/Headroom/actions/workflows/ci.yml/badge.svg)](https://github.com/HelpsHelps2/Headroom/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/HelpsHelps2/Headroom)](https://github.com/HelpsHelps2/Headroom/releases/latest)
+
 Headroom finds stale build output across your repositories and agent worktrees and gives the space back. It removes `node_modules` and Cargo `target` folders from worktrees nobody is using, and leaves source, branches, lockfiles, worktrees, and shared compiler and package caches alone.
 
 It is a native Mac menu bar utility with one narrow window: a disk ring, one button, and a review of exactly what will be deleted.
@@ -81,6 +85,10 @@ Local builds are ad-hoc signed; releases are Developer ID signed and notarized (
 - [Local validation and remaining limits](docs/validation.md)
 - [Releasing](docs/releasing.md)
 - [Design references](docs/design/utility-round-2.html)
+
+## Contributing
+
+Headroom is open source and welcomes issues and pull requests. Read [CONTRIBUTING.md](CONTRIBUTING.md) first and follow the [code of conduct](CODE_OF_CONDUCT.md). Report anything deleted that should have been kept privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
