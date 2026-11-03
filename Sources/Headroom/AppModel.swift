@@ -351,7 +351,7 @@ final class AppModel {
         let approved = Set(list.filter { $0.verdict == .needsLook }.map(\.top))
         removalTask = Task { [weak self] in
             do {
-                let plan = try await engine.planWorktreeRemoval(tops: Set(list.map(\.top)), approvingIgnored: approved)
+                let plan = try await engine.planWorktreeRemoval(reviewed: list, approvingIgnored: approved)
                 self?.removal?.candidates = plan.candidates
                 let results = try await engine.removeWorktrees(plan, progress: { entry in
                     Task { @MainActor in self?.recordRemoval(entry) }

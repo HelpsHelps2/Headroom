@@ -114,9 +114,13 @@ public actor Engine {
     }
     /// There is deliberately no automatic path to this: removing a worktree always follows a person's review.
     public func planWorktreeRemoval(tops: Set<String>, approvingIgnored: Set<String> = []) throws -> WorktreeRemovalPlan {
-        let candidates = worktrees.filter { tops.contains($0.top) && ($0.verdict == .ready || ($0.verdict == .needsLook && approvingIgnored.contains($0.top))) }
+        try planWorktreeRemoval(reviewed: worktrees.filter { tops.contains($0.top) }, approvingIgnored: approvingIgnored)
+    }
+    /// Plans from the statuses a person actually saw, not the latest survey, which may have refreshed during the review.
+    public func planWorktreeRemoval(reviewed: [WorktreeStatus], approvingIgnored: Set<String> = []) throws -> WorktreeRemovalPlan {
+        let candidates = reviewed.filter { $0.verdict == .ready || ($0.verdict == .needsLook && approvingIgnored.contains($0.top)) }
         guard !candidates.isEmpty else { throw HeadroomError.message("No selected worktree can be removed. Scan again and review the reasons.") }
-        return .init(candidates: candidates, approvedIgnored: approvingIgnored.intersection(tops))
+        return .init(candidates: candidates, approvedIgnored: approvingIgnored.intersection(candidates.map(\.top)))
     }
     /// Removes reviewed worktrees one at a time, applying every rule again immediately before each one.
     public func removeWorktrees(_ plan: WorktreeRemovalPlan, progress: (@Sendable (HistoryEntry) -> Void)? = nil) throws -> [HistoryEntry] {
@@ -136,7 +140,9 @@ public actor Engine {
                                               activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock())
                 guard fresh.verdict != .kept else { throw HeadroomError.message(fresh.reason ?? "It no longer meets the rules.") }
                 guard fresh.head == reviewed.head else { throw HeadroomError.message("Its commit changed since review.") }
-                guard fresh.verdict == .ready || (plan.approvedIgnored.contains(reviewed.top) && Set(fresh.otherIgnored).isSubset(of: reviewed.otherIgnored)) else {
+                // Everything unrestorable that goes must have been on the review screen.
+                guard Set(fresh.envFiles).isSubset(of: reviewed.envFiles), Set(fresh.otherIgnored).isSubset(of: reviewed.otherIgnored),
+                      fresh.verdict == .ready || plan.approvedIgnored.contains(reviewed.top) else {
                     throw HeadroomError.message("It has new ignored files since review.")
                 }
                 if let repository { try inspector.preserveCommit(top: fresh.top, head: fresh.head, repository: repository) }

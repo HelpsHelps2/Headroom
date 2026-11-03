@@ -377,6 +377,34 @@ final class WorktreeTests: XCTestCase {
         XCTAssertEqual(entries.first { $0.path == other.path }?.outcome, "Skipped")
         XCTAssertTrue(f.exists(other.appendingPathComponent("notes/new.md")))
     }
+    func testRefreshDuringReviewCannotAddFilesToWhatWasApproved() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("notes")
+        try Data("x".utf8).write(to: tree.appendingPathComponent("scratch.png"))
+        let engine = try f.engine()
+        let shown = try await f.survey(engine)
+        let reviewed = try XCTUnwrap(shown[tree.path])
+        // An older file arrives with its old time, so the unused wait still passes, and a survey refreshes during the review.
+        let late = tree.appendingPathComponent("notes/old.md")
+        try FileManager.default.createDirectory(at: late.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: late)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-30 * 86400)], ofItemAtPath: late.path)
+        _ = try await engine.surveyWorktrees()
+        let plan = try await engine.planWorktreeRemoval(reviewed: [reviewed], approvingIgnored: [tree.path])
+        let entries = try await engine.removeWorktrees(plan)
+        XCTAssertEqual(entries.first?.outcome, "Skipped", entries.first?.detail ?? "")
+        XCTAssertTrue(f.exists(late))
+    }
+    func testEnvFileAddedAfterReviewCancelsRemoval() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("done")
+        let engine = try f.engine()
+        let shown = try await f.survey(engine)
+        let plan = try await engine.planWorktreeRemoval(reviewed: [try XCTUnwrap(shown[tree.path])])
+        let env = tree.appendingPathComponent(".env")
+        try Data("A=1\n".utf8).write(to: env)
+        let entries = try await engine.removeWorktrees(plan)
+        XCTAssertEqual(entries.first?.outcome, "Skipped", entries.first?.detail ?? "")
+        XCTAssertTrue(f.exists(env))
+    }
     func testKeptWorktreesCannotBePlanned() async throws {
         let f = try RepositoryFixture(), tree = try f.worktree("local", commits: 1)
         let engine = try f.engine()
