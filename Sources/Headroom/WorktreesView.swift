@@ -139,7 +139,7 @@ struct WorktreesView: View {
             Image(systemName: model.worktreeFilter == .stale ? "checkmark.circle" : "tray").font(.sans(22)).foregroundStyle(theme.dim)
             Text(model.repositories.isEmpty ? "No build output found yet" : model.worktreeFilter == .stale ? "Nothing stale in \(model.selectedRepository ?? "any repository")" : "Nothing to show")
                 .font(.sans(13, .medium))
-            Text(model.worktreeFilter == .stale ? "Worktrees become stale after \(Format.hours(model.preferences.keepHours)) without builds or open files. Check a recent one in All to clean it now." : "Kept worktrees appear here with the reason.")
+            Text(model.worktreeFilter == .stale ? "Worktrees become stale after \(Format.hours(model.preferences.keepHours)) without builds, installs, or open files. Check a recent one in All to clean it now." : "Kept worktrees appear here with the reason.")
                 .font(.sans(11.5)).foregroundStyle(theme.muted).multilineTextAlignment(.center).frame(maxWidth: 240)
             Spacer()
         }

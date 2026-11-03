@@ -115,11 +115,14 @@ final class AppModel {
     @ObservationIgnored private var engine: Engine?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored var sweepTask: Task<Void, Never>?
+    @ObservationIgnored private var sleptAt: Date?
+    @ObservationIgnored private var powerObservers: [NSObjectProtocol] = []
 
     init(demo: Bool = CommandLine.arguments.contains("--demo")) {
         self.demo = demo
         if demo { Demo.load(into: self); return }
         do { engine = try Engine() } catch { self.error = error.localizedDescription }
+        observeSleep()
         Task {
             await reload()
             if preferences.roots.isEmpty { await suggestFolders() } else { await scan() }
@@ -220,6 +223,30 @@ final class AppModel {
             Task { @MainActor in await self?.tick() }
         }
         timer?.tolerance = 30
+    }
+
+    /// Sleep does not restart the idle clock: Headroom stays running through it and nothing can use a folder meanwhile.
+    /// A quit or crash still restarts it, because then nothing was watching.
+    private func observeSleep() {
+        let center = NSWorkspace.shared.notificationCenter
+        powerObservers = [
+            center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sleptAt = Date() }
+            },
+            center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.woke() }
+            },
+        ]
+    }
+
+    private func woke() {
+        guard let start = sleptAt, let engine else { return }
+        sleptAt = nil
+        let interval = DateInterval(start: start, end: max(start, Date()))
+        Task {
+            await engine.recordSleep(interval)
+            await tick()
+        }
     }
 
     private func tick() async {

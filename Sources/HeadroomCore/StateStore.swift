@@ -60,7 +60,9 @@ final class StateStore {
         let data = try JSONEncoder().encode(preferences)
         try update("INSERT OR REPLACE INTO settings VALUES ('preferences',?)", [String(decoding: data, as: UTF8.self)])
     }
-    func observed(_ artifact: Artifact, now: Date, gapLimit: TimeInterval) throws -> Date {
+    /// Start of the current unbroken stretch in which this output was seen unchanged with nothing protecting it except
+    /// the keep window. That window and this observation run together, so automatic cleanup waits about one window, not two.
+    func observed(_ artifact: Artifact, now: Date, continuous: (Date) -> Bool) throws -> Date {
         let identity = "\(artifact.identity.device):\(artifact.identity.inode)"
         let stmt = try statement("SELECT identity,since,seen,changed FROM observation WHERE path=?", [artifact.path])
         defer { sqlite3_finalize(stmt) }
@@ -70,10 +72,9 @@ final class StateStore {
             let oldSince = sqlite3_column_double(stmt, 1)
             let seen = sqlite3_column_double(stmt, 2)
             let changed = sqlite3_column_double(stmt, 3)
-            if oldID == identity, now.timeIntervalSince1970 >= seen,
-               now.timeIntervalSince1970 - seen <= gapLimit,
+            if oldID == identity, continuous(Date(timeIntervalSince1970: seen)),
                changed == artifact.latestWrite.timeIntervalSince1970,
-               artifact.reasons.isEmpty {
+               artifact.eligible || artifact.waiting {
                 since = Date(timeIntervalSince1970: oldSince)
             }
         }
@@ -118,11 +119,13 @@ final class StateStore {
         try update("DELETE FROM observation WHERE seen < ?", ["\(now.addingTimeInterval(-90 * 86400).timeIntervalSince1970)"])
         try execute("DELETE FROM observation WHERE path IN (SELECT path FROM observation ORDER BY seen DESC LIMIT -1 OFFSET 100000)")
     }
-    func scheduleDue(now: Date, interval: TimeInterval) throws -> Bool {
+    /// Claims a scheduled run when the interval has passed and something is `ready`. Without anything ready the claim waits.
+    func scheduleDue(now: Date, interval: TimeInterval, ready: Bool) throws -> Bool {
         let old = try scalar("SELECT value FROM settings WHERE id='lastSchedule'").flatMap(Double.init)
         if let old, now.timeIntervalSince1970 >= old, now.timeIntervalSince1970 - old < interval { return false }
-        try update("INSERT OR REPLACE INTO settings VALUES ('lastSchedule',?)", ["\(now.timeIntervalSince1970)"])
         // First enablement starts the interval; it does not immediately delete.
+        guard old == nil || ready else { return false }
+        try update("INSERT OR REPLACE INTO settings VALUES ('lastSchedule',?)", ["\(now.timeIntervalSince1970)"])
         return old != nil
     }
 }

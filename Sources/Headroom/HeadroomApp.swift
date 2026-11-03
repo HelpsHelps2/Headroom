@@ -98,7 +98,7 @@ private struct Screens: View {
             Button("Cancel", role: .cancel) {}
             Button("Turn On", role: .destructive) { model.setSchedule(true) }
         } message: {
-            Text("Every \(Format.hours(model.preferences.intervalHours)), Headroom permanently deletes node_modules and Cargo target folders that have been idle for \(Format.hours(model.preferences.keepHours)), with no review. Folders with open files, running builds, locks, or pins are always kept.")
+            Text("Headroom permanently deletes node_modules and Cargo target folders, with no review, once nothing has built, installed, or opened files in their project for \(Format.hours(model.preferences.keepHours)). It cleans at most every \(Format.hours(model.preferences.intervalHours)). Folders with open files, running builds, locks, or pins are always kept.")
         }
     }
 }

@@ -188,6 +188,60 @@ final class EngineTests: XCTestCase {
         clock.advance(601); _ = try await engine.scan()
         do { _ = try await engine.plan(paths: [f.target.path], automatic: true); XCTFail("A gap must reset observation") } catch {}
     }
+    func testKeepWindowAndObservationRunTogether() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        var p = f.preferences(); p.keepHours = 1; p.scheduled = true; p.roots[0].automatic = true
+        try await engine.save(p)
+        // Freshly built: protected by the keep window, but the observation clock starts now.
+        if let enumerator = FileManager.default.enumerator(at: f.target, includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator { try FileManager.default.setAttributes([.modificationDate: clock.now()], ofItemAtPath: url.path) }
+        }
+        try FileManager.default.setAttributes([.modificationDate: clock.now()], ofItemAtPath: f.target.path)
+        let first = try await engine.scan()
+        XCTAssertTrue(try XCTUnwrap(first.artifacts.first).waiting)
+        for _ in 0..<12 { clock.advance(300); _ = try await engine.scan() }
+        clock.advance(1); _ = try await engine.scan()
+        _ = try await engine.plan(paths: [f.target.path], automatic: true)
+    }
+    func testRecordedSleepKeepsObservationContinuous() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        var p = f.preferences(); p.keepHours = 1; p.scheduled = true; p.roots[0].automatic = true
+        try await engine.save(p)
+        _ = try await engine.scan()
+        clock.advance(120)
+        let asleep = clock.now(); clock.advance(8 * 3600)
+        await engine.recordSleep(DateInterval(start: asleep, end: clock.now()))
+        clock.advance(60); _ = try await engine.scan()
+        _ = try await engine.plan(paths: [f.target.path], automatic: true)
+    }
+    func testContinuityAllowsOnlyShortAwakeGaps() {
+        let t = Date()
+        XCTAssertTrue(Engine.continuous(seen: t, now: t.addingTimeInterval(600), sleeps: []))
+        XCTAssertFalse(Engine.continuous(seen: t, now: t.addingTimeInterval(601), sleeps: []))
+        let night = DateInterval(start: t.addingTimeInterval(300), end: t.addingTimeInterval(30_000))
+        XCTAssertTrue(Engine.continuous(seen: t, now: t.addingTimeInterval(30_300), sleeps: [night]))
+        // Awake and unwatched too long before or after the sleep.
+        XCTAssertFalse(Engine.continuous(seen: t.addingTimeInterval(-400), now: t.addingTimeInterval(30_300), sleeps: [night]))
+        XCTAssertFalse(Engine.continuous(seen: t, now: t.addingTimeInterval(30_700), sleeps: [night]))
+        XCTAssertFalse(Engine.continuous(seen: t, now: t.addingTimeInterval(-1), sleeps: []))
+    }
+    func testScheduledCheckWithNothingReadyKeepsTheIntervalOpen() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        var p = f.preferences(); p.keepHours = 2; p.intervalHours = 1; p.scheduled = true; p.roots[0].automatic = true
+        try await engine.save(p)
+        _ = try await engine.scan()
+        _ = try await engine.runScheduleIfDue()
+        var cleaned: [HistoryEntry] = []
+        // Due after 1 h, but the output qualifies only after 2 h; it is cleaned at the first check after that.
+        for _ in 0..<25 {
+            clock.advance(300)
+            _ = try await engine.scan()
+            cleaned += try await engine.runScheduleIfDue()
+            if !cleaned.isEmpty { break }
+        }
+        XCTAssertEqual(cleaned.filter { $0.outcome == "Cleaned" }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.target.path))
+    }
     func testSymlinkReplacementAfterReviewIsSkipped() async throws {
         let f = try Fixture(), engine = try f.engine()
         try await engine.save(f.preferences()); _ = try await engine.scan()
