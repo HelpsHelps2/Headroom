@@ -111,7 +111,7 @@ public struct Scanner: Sendable {
         return .init(artifacts: results.with { $0 }.sorted { $0.bytes > $1.bytes }, issues: Array(Set(issues)).sorted(), scannedAt: now,
                      capacity: (space[.systemSize] as? NSNumber)?.int64Value ?? 0,
                      available: (space[.systemFreeSize] as? NSNumber)?.int64Value ?? 0,
-                     protectedCaches: protectedCaches, volume: volume)
+                     protectedCaches: protectedCaches, volume: volume, worktrees: worktrees)
     }
 
     static let workers = 4

@@ -106,6 +106,11 @@ struct HistoryView: View {
         return "\(day), \(time) · \(run.automatic ? "automatic" : "manual")"
     }
 
+    private func summary(_ run: SweepRun) -> String {
+        let worktrees = run.entries.contains { $0.restore != nil }
+        return "\(run.cleaned.count) \(worktrees ? "worktrees" : "folders") · \(run.skipped.count) skipped\(run.skipped.isEmpty || worktrees ? "" : ", active")"
+    }
+
     private func row(_ run: SweepRun) -> some View {
         let open = expanded == run.id
         return VStack(alignment: .leading, spacing: 0) {
@@ -115,7 +120,7 @@ struct HistoryView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title(run)).font(.sans(12, .medium)).foregroundStyle(theme.ink)
-                        Text("\(run.cleaned.count) folders · \(run.skipped.count) skipped\(run.skipped.isEmpty ? "" : ", active")")
+                        Text(summary(run))
                             .font(.sans(11)).foregroundStyle(run.skipped.isEmpty ? theme.muted : theme.accent)
                     }
                     Spacer()
@@ -135,7 +140,16 @@ struct HistoryView: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(Format.home(entry.path)).lineLimit(1).truncationMode(.head)
                                 if entry.outcome != "Cleaned" {
-                                    Text(Reason.short(entry.detail)).foregroundStyle(theme.dim).italic()
+                                    Text(entry.restore == nil ? Reason.short(entry.detail) : entry.detail).foregroundStyle(theme.dim).italic()
+                                } else if entry.restore != nil {
+                                    Text(entry.detail).foregroundStyle(theme.dim).fixedSize(horizontal: false, vertical: true)
+                                    if let restore = entry.restore, !FileManager.default.fileExists(atPath: restore.top) {
+                                        Button { model.restoreWorktree(restore) } label: {
+                                            Text("Restore").font(.sans(11, .semibold)).foregroundStyle(theme.accent).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(PressStyle())
+                                        .help("Recreates this worktree from its branch. Ignored files don't come back.")
+                                    }
                                 }
                             }
                             Spacer(minLength: 4)

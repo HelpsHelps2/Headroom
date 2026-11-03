@@ -4,8 +4,8 @@ import ServiceManagement
 import HeadroomCore
 
 enum AppTab: String, CaseIterable { case disk = "Disk", worktrees = "Worktrees", history = "History" }
-enum Screen: Equatable { case main, review, sweep, settings }
-enum WorktreeFilter: String, CaseIterable { case all = "All", stale = "Stale", kept = "Kept" }
+enum Screen: Equatable { case main, review, sweep, settings, worktreeRules, worktreeReview, worktreeRemoval }
+enum WorktreeFilter: String, CaseIterable { case all = "All", stale = "Stale", merged = "Merged", kept = "Kept" }
 enum ReviewFilter: String, CaseIterable { case remove = "Remove", kept = "Kept", excluded = "Excluded" }
 
 /// All build output found in one worktree.
@@ -79,6 +79,17 @@ struct SweepState {
     var done: Int { entries.count }
 }
 
+struct WorktreeRemovalState {
+    var candidates: [WorktreeStatus]
+    var entries: [String: HistoryEntry] = [:]
+    var finished = false
+    var stopping = false
+    var failed = false
+    var total: Int64 { candidates.reduce(0) { $0 + $1.bytes } }
+    var freed: Int64 { entries.values.filter { $0.outcome == "Cleaned" }.reduce(0) { $0 + $1.bytes } }
+    var current: String? { finished ? nil : candidates.first { entries[$0.top] == nil }?.top }
+}
+
 @MainActor @Observable
 final class AppModel {
     var tab: AppTab = .disk
@@ -111,6 +122,17 @@ final class AppModel {
     var suggestions: [FolderSuggestion] = []
     var chosenSuggestions: Set<String> = []
     var findingSuggestions = false
+    /// Every worktree with its verdict under the removal rules.
+    var worktrees: [WorktreeStatus] = []
+    var surveying = false
+    @ObservationIgnored var surveyedAt: Date?
+    /// Ready worktrees unchecked by a person. Ready ones start checked.
+    var worktreeUnchecked: Set<String> = []
+    /// Worktrees with other ignored files checked by a person. Those start unchecked.
+    var worktreeOptedIn: Set<String> = []
+    var worktreeReview: [WorktreeStatus] = []
+    var removal: WorktreeRemovalState?
+    @ObservationIgnored var removalTask: Task<Void, Never>?
     let demo: Bool
     @ObservationIgnored private var engine: Engine?
     @ObservationIgnored private var timer: Timer?
@@ -166,6 +188,20 @@ final class AppModel {
     var runs: [SweepRun] {
         Dictionary(grouping: history, by: \.run).map { SweepRun(id: $0.key, entries: $0.value) }.sorted { $0.date > $1.date }
     }
+    /// A cleanup or worktree removal owns the screen until a person closes it.
+    var busy: Bool { sweep != nil || removal != nil }
+    var scopedWorktrees: [WorktreeStatus] { worktrees.filter { selectedRepository == nil || $0.repository == selectedRepository } }
+    var readyWorktrees: [WorktreeStatus] { scopedWorktrees.filter { $0.verdict == .ready } }
+    var lookWorktrees: [WorktreeStatus] { scopedWorktrees.filter { $0.verdict == .needsLook } }
+    var keptWorktrees: [WorktreeStatus] { scopedWorktrees.filter { $0.verdict == .kept } }
+    var chosenWorktrees: [WorktreeStatus] { scopedWorktrees.filter(isChosen) }
+    func isChosen(_ status: WorktreeStatus) -> Bool {
+        switch status.verdict {
+        case .ready: !worktreeUnchecked.contains(status.top)
+        case .needsLook: worktreeOptedIn.contains(status.top)
+        case .kept: false
+        }
+    }
     var reviewIncluded: [Artifact] { review.filter { !excluded.contains($0.path) } }
     var reviewBytes: Int64 { reviewIncluded.reduce(0) { $0 + $1.bytes } }
     var statusText: String {
@@ -189,7 +225,7 @@ final class AppModel {
     }
 
     func scan() async {
-        guard let engine, !scanning, sweep == nil, !preferences.roots.isEmpty else { return }
+        guard let engine, !scanning, !busy, !preferences.roots.isEmpty else { return }
         scanning = true
         let revision = inventoryRevision
         defer { scanning = false }
@@ -203,6 +239,20 @@ final class AppModel {
             hasScanned = true
             history = try await engine.history()
             space = try await engine.space(since: Date().addingTimeInterval(-14 * 86400))
+            let looking = tab == .worktrees && worktreeFilter == .merged
+            Task { await refreshWorktrees(force: looking) }
+        } catch { self.error = error.localizedDescription }
+    }
+
+    /// Worktree verdicts run less often than scans: every rule is applied again before anything is removed, so an older list can't remove the wrong thing.
+    func refreshWorktrees(force: Bool = false) async {
+        guard let engine, !surveying, !busy else { return }
+        if !force, let surveyedAt, Date().timeIntervalSince(surveyedAt) < 1800 { return }
+        surveying = true
+        defer { surveying = false }
+        do {
+            worktrees = try await engine.surveyWorktrees()
+            surveyedAt = Date()
         } catch { self.error = error.localizedDescription }
     }
 
@@ -251,7 +301,7 @@ final class AppModel {
 
     private func tick() async {
         Updates.shared.installIfIdle()
-        guard sweep == nil, !scanning, !preferences.roots.isEmpty else { return }
+        guard !busy, !scanning, !preferences.roots.isEmpty else { return }
         await scan()
         guard preferences.scheduled, !preferences.paused, let engine else { return }
         do {
@@ -263,6 +313,102 @@ final class AppModel {
     func windowOpened() {
         guard !demo, !scanning, Date().timeIntervalSince(inventory.scannedAt) > 120 else { return }
         Task { await scan() }
+    }
+
+    // MARK: Whole worktrees
+
+    func openMerged() {
+        guard !demo, surveyedAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true else { return }
+        Task { await refreshWorktrees(force: true) }
+    }
+
+    func toggleChosen(_ status: WorktreeStatus) {
+        switch status.verdict {
+        case .ready:
+            if worktreeUnchecked.contains(status.top) { worktreeUnchecked.remove(status.top) } else { worktreeUnchecked.insert(status.top) }
+        case .needsLook:
+            if worktreeOptedIn.contains(status.top) { worktreeOptedIn.remove(status.top) } else { worktreeOptedIn.insert(status.top) }
+        case .kept: break
+        }
+    }
+
+    func toggleKeep(_ top: String) {
+        if preferences.pinned.contains(top) { preferences.pinned.remove(top) } else { preferences.pinned.insert(top) }
+        Task { await persist(); await refreshWorktrees(force: true) }
+    }
+
+    func openWorktreeReview() {
+        worktreeReview = chosenWorktrees.sorted { $0.bytes > $1.bytes }
+        guard !worktreeReview.isEmpty else { return }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { screen = .worktreeReview }
+    }
+
+    func startWorktreeRemoval() {
+        let list = worktreeReview
+        guard !list.isEmpty, !busy else { return }
+        removal = WorktreeRemovalState(candidates: list)
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { screen = .worktreeRemoval }
+        if demo { Demo.simulateRemoval(self); return }
+        guard let engine else { return }
+        let approved = Set(list.filter { $0.verdict == .needsLook }.map(\.top))
+        removalTask = Task { [weak self] in
+            do {
+                let plan = try await engine.planWorktreeRemoval(reviewed: list, approvingIgnored: approved)
+                self?.removal?.candidates = plan.candidates
+                let results = try await engine.removeWorktrees(plan, progress: { entry in
+                    Task { @MainActor in self?.recordRemoval(entry) }
+                })
+                for entry in results { self?.recordRemoval(entry) }
+            } catch {
+                self?.error = error.localizedDescription
+                self?.removal?.failed = true
+            }
+            self?.removal?.finished = true
+            self?.removalTask = nil
+            await self?.reload()
+        }
+    }
+
+    func recordRemoval(_ entry: HistoryEntry) {
+        guard removal?.finished == false else { return }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
+            removal?.entries[entry.path] = entry
+            if entry.outcome == "Cleaned" {
+                worktrees.removeAll { $0.top == entry.path }
+                inventory.artifacts.removeAll { Paths.contains(entry.path, $0.path) }
+            }
+        }
+    }
+
+    func stopWorktreeRemoval() {
+        removal?.stopping = true
+        removalTask?.cancel()
+        if demo { removal?.finished = true }
+    }
+
+    func closeWorktreeRemoval() {
+        guard let completed = removal, completed.finished else { return }
+        lastReclaimed = completed.freed
+        if demo {
+            inventory.available = min(inventory.capacity, inventory.available + completed.freed)
+        } else if let attributes = try? FileManager.default.attributesOfFileSystem(forPath: preferences.roots.first?.path ?? "/"),
+                  let free = attributes[.systemFreeSize] as? NSNumber {
+            inventory.available = free.int64Value
+        }
+        removal = nil
+        worktreeUnchecked = []; worktreeOptedIn = []
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { screen = .main }
+        Task { await scan() }
+    }
+
+    func restoreWorktree(_ restore: WorktreeRestore) {
+        guard let engine, !demo else { return }
+        Task {
+            do {
+                try await engine.restoreWorktree(restore)
+                await scan()
+            } catch { self.error = error.localizedDescription }
+        }
     }
 
     // MARK: First launch
@@ -302,6 +448,7 @@ final class AppModel {
 
     /// Opens the review for `scope`. With `skippingWait`, output only waiting out the keep window joins the plan.
     func openReview(_ scope: [Artifact], skippingWait: Bool = false) {
+        guard !busy else { return }
         review = scope.filter { $0.eligible(skippingWait: skippingWait) }.sorted { ($0.worktree?.top ?? $0.project, -$0.bytes) < ($1.worktree?.top ?? $1.project, -$1.bytes) }
         let tops = Set(scope.map { $0.worktree?.top ?? $0.project })
         reviewKept = kept.filter { tops.contains($0.worktree?.top ?? $0.project) && !review.contains($0) }

@@ -4,7 +4,7 @@ import Darwin
 struct CommandResult { var status: Int32; var output: String; var error: String }
 
 enum Command {
-    static func run(_ executable: String, _ arguments: [String], at directory: String? = nil) throws -> CommandResult {
+    static func run(_ executable: String, _ arguments: [String], at directory: String? = nil, timeout: Int = 15) throws -> CommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -30,12 +30,12 @@ enum Command {
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
-        if exited.wait(timeout: .now() + 15) == .timedOut, process.isRunning { process.terminate(); usleep(50_000); if process.isRunning { kill(process.processIdentifier, SIGKILL) }; process.waitUntilExit(); throw HeadroomError.message("Inspection timed out: \(URL(fileURLWithPath: executable).lastPathComponent).") }
+        if exited.wait(timeout: .now() + .seconds(timeout)) == .timedOut, process.isRunning { process.terminate(); usleep(50_000); if process.isRunning { kill(process.processIdentifier, SIGKILL) }; process.waitUntilExit(); throw HeadroomError.message("Inspection timed out: \(URL(fileURLWithPath: executable).lastPathComponent).") }
         process.waitUntilExit()
         return .init(status: process.terminationStatus, output: String(decoding: try Data(contentsOf: out), as: UTF8.self), error: String(decoding: try Data(contentsOf: err), as: UTF8.self))
     }
-    static func git(_ project: String, _ args: [String]) throws -> CommandResult {
-        try run("/usr/bin/git", ["--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"] + args, at: project)
+    static func git(_ project: String, _ args: [String], timeout: Int = 15) throws -> CommandResult {
+        try run("/usr/bin/git", ["--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"] + args, at: project, timeout: timeout)
     }
 }
 
@@ -96,6 +96,8 @@ struct TreeMeasurement {
     var bytes: Int64 = 0
     var files: Int = 0
     var latestWrite: Date = .distantPast
+    /// Newest change to a file or link. Unlike directory times, removing a build folder doesn't move this.
+    var latestFileWrite: Date = .distantPast
     var identity: FileIdentity
 }
 
@@ -110,7 +112,8 @@ enum FileInspection {
     static func date(_ value: stat) -> Date { Date(timeIntervalSince1970: Double(value.st_mtimespec.tv_sec) + Double(value.st_mtimespec.tv_nsec) / 1e9) }
     /// Allocated bytes of files that only this tree references. Hard-linked files (package stores) are not counted:
     /// deleting this copy does not free them. Links are counted as entries but never followed.
-    static func measure(_ path: String, allowLinks: Bool = false) throws -> TreeMeasurement {
+    /// Directories named in `skipping` are left out entirely, at any depth.
+    static func measure(_ path: String, allowLinks: Bool = false, skipping: Set<String> = []) throws -> TreeMeasurement {
         let root = try metadata(path)
         guard isDirectory(root) else { throw HeadroomError.message("Output is not a regular directory (links are protected).") }
         var result = TreeMeasurement(identity: identity(root))
@@ -120,25 +123,27 @@ enum FileInspection {
         defer { close(fd) }
         var opened = stat()
         guard fstat(fd, &opened) == 0, identity(opened) == result.identity else { throw HeadroomError.message("Output changed during inspection.") }
-        try walk(fd, device: root.st_dev, allowLinks: allowLinks, into: &result)
+        try walk(fd, device: root.st_dev, allowLinks: allowLinks, skipping: skipping, into: &result)
         return result
     }
-    private static func walk(_ fd: Int32, device: dev_t, allowLinks: Bool, into result: inout TreeMeasurement) throws {
+    private static func walk(_ fd: Int32, device: dev_t, allowLinks: Bool, skipping: Set<String>, into result: inout TreeMeasurement) throws {
         for name in try entries(fd) {
             var value = stat()
             guard fstatat(fd, name, &value, AT_SYMLINK_NOFOLLOW) == 0 else { throw HeadroomError.message("Cannot inspect \(name): \(String(cString: strerror(errno)))") }
+            if isDirectory(value), skipping.contains(name) { continue }
             let link = value.st_mode & S_IFMT == S_IFLNK
             guard !link || allowLinks else { throw HeadroomError.message("Output contains a symbolic link; review it manually.") }
             guard link || value.st_mode & S_IFMT == S_IFREG || isDirectory(value) else { throw HeadroomError.message("Output contains a special filesystem object.") }
             guard value.st_dev == device else { throw HeadroomError.message("Output crosses a filesystem boundary.") }
             result.latestWrite = max(result.latestWrite, date(value))
+            if !isDirectory(value) { result.latestFileWrite = max(result.latestFileWrite, date(value)) }
             result.files += 1
             guard result.files <= 2_000_000 else { throw HeadroomError.message("Output exceeds this build's inspection limit.") }
             if isDirectory(value) {
                 let child = openat(fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
                 guard child >= 0 else { throw HeadroomError.message("Cannot open \(name): \(String(cString: strerror(errno)))") }
                 defer { close(child) }
-                try walk(child, device: device, allowLinks: allowLinks, into: &result)
+                try walk(child, device: device, allowLinks: allowLinks, skipping: skipping, into: &result)
             } else if !link, value.st_nlink <= 1 { result.bytes += Int64(value.st_blocks) * 512 }
         }
     }

@@ -17,6 +17,8 @@ final class StateStore {
         try execute("CREATE TABLE IF NOT EXISTS settings (id TEXT PRIMARY KEY, value TEXT NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS observation (path TEXT PRIMARY KEY, identity TEXT NOT NULL, since REAL NOT NULL, seen REAL NOT NULL, changed REAL NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS history (id TEXT PRIMARY KEY, date REAL NOT NULL, path TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL, bytes INTEGER NOT NULL)")
+        // A new table rather than a schema version, so a copy of the app that predates it can still open this database.
+        try execute("CREATE TABLE IF NOT EXISTS worktree_restore (entry TEXT PRIMARY KEY, top TEXT NOT NULL, common TEXT NOT NULL, branch TEXT NOT NULL, head TEXT NOT NULL)")
         if version < 2 {
             try execute("BEGIN")
             try execute("ALTER TABLE history ADD COLUMN run TEXT NOT NULL DEFAULT ''")
@@ -84,17 +86,25 @@ final class StateStore {
     func record(_ entry: HistoryEntry) throws {
         try update("INSERT OR REPLACE INTO history (id,date,path,outcome,detail,bytes,run,automatic) VALUES (?,?,?,?,?,?,?,?)",
                    [entry.id, "\(entry.date.timeIntervalSince1970)", entry.path, entry.outcome, entry.detail, "\(entry.bytes)", entry.run, entry.automatic ? "1" : "0"])
+        if let restore = entry.restore {
+            try update("INSERT OR REPLACE INTO worktree_restore VALUES (?,?,?,?,?)", [entry.id, restore.top, restore.common, restore.branch ?? "", restore.head])
+        }
         try execute("DELETE FROM history WHERE id IN (SELECT id FROM history ORDER BY date DESC LIMIT -1 OFFSET 1000)")
+        try execute("DELETE FROM worktree_restore WHERE entry NOT IN (SELECT id FROM history)")
     }
     func history() throws -> [HistoryEntry] {
-        let stmt = try statement("SELECT id,date,path,outcome,detail,bytes,run,automatic FROM history ORDER BY date DESC LIMIT 1000", [])
+        let stmt = try statement("SELECT h.id,h.date,h.path,h.outcome,h.detail,h.bytes,h.run,h.automatic,r.top,r.common,r.branch,r.head FROM history h LEFT JOIN worktree_restore r ON r.entry=h.id ORDER BY h.date DESC LIMIT 1000", [])
         defer { sqlite3_finalize(stmt) }
         var result: [HistoryEntry] = []
         func str(_ index: Int32) -> String { String(cString: sqlite3_column_text(stmt, index)) }
         while sqlite3_step(stmt) == SQLITE_ROW {
             let run = str(6)
+            var restore: WorktreeRestore?
+            if sqlite3_column_type(stmt, 8) != SQLITE_NULL {
+                restore = .init(top: str(8), common: str(9), branch: str(10).isEmpty ? nil : str(10), head: str(11))
+            }
             result.append(.init(id: str(0), date: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)), path: str(2), outcome: str(3), detail: str(4),
-                                bytes: sqlite3_column_int64(stmt, 5), run: run.isEmpty ? str(0) : run, automatic: sqlite3_column_int(stmt, 7) != 0))
+                                bytes: sqlite3_column_int64(stmt, 5), run: run.isEmpty ? str(0) : run, automatic: sqlite3_column_int(stmt, 7) != 0, restore: restore))
         }
         return result
     }

@@ -11,6 +11,7 @@ struct WorktreesView: View {
             switch model.worktreeFilter {
             case .stale: group.stale
             case .kept: !group.stale
+            case .merged: false
             case .all: true
             }
         }
@@ -36,6 +37,9 @@ struct WorktreesView: View {
         let all = model.repositoryGroups
         let stale = all.filter(\.stale)
         let chosen = model.selectedGroups
+        let summary = model.worktreeFilter == .merged
+            ? "\(model.scopedWorktrees.count) trees"
+            : "\(all.count) trees · \(Format.bytes(all.reduce(0) { $0 + $1.bytes }))"
         VStack(spacing: 0) {
             TopBar { ScanButton() } title: { Brand() } trailing: { Color.clear.frame(width: 24) }
             Tabs(selection: $model.tab)
@@ -51,15 +55,16 @@ struct WorktreesView: View {
                 .disabled(model.repositories.count < 2)
                 .popover(isPresented: $choosingRepository, arrowEdge: .bottom) { repositoryList }
                 Spacer()
-                Text("\(all.count) trees · \(Format.bytes(all.reduce(0) { $0 + $1.bytes }))").font(.mono(11, .medium)).foregroundStyle(theme.muted)
+                Text(summary).font(.mono(11, .medium)).foregroundStyle(theme.muted)
             }
             .padding(.horizontal, 14).padding(.top, 14)
             HStack(spacing: 14) {
                 filter(.all, all.count)
                 filter(.stale, stale.count)
+                filter(.merged, model.readyWorktrees.count + model.lookWorktrees.count)
                 filter(.kept, all.count - stale.count)
                 Spacer()
-                if !chosen.isEmpty {
+                if !chosen.isEmpty && model.worktreeFilter != .merged {
                     Button { withAnimation(.easeOut(duration: 0.15)) { model.selected = [] } } label: {
                         Text("Clear \(chosen.count)").font(.sans(11.5, .medium)).foregroundStyle(theme.accent).padding(.bottom, 8).contentShape(Rectangle())
                     }
@@ -69,6 +74,17 @@ struct WorktreesView: View {
             }
             .padding(.horizontal, 14).padding(.top, 10)
             .hairline(.bottom)
+            if model.worktreeFilter == .merged {
+                MergedWorktreesList()
+            } else {
+                buildOutput
+            }
+        }
+    }
+
+    @ViewBuilder private var buildOutput: some View {
+        let stale = model.repositoryGroups.filter(\.stale)
+        let chosen = model.selectedGroups
             if rows.isEmpty {
                 empty
             } else {
@@ -105,7 +121,6 @@ struct WorktreesView: View {
             }
             .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 14)
             .hairline(.top)
-        }
     }
 
     private func sectionHeader(_ repository: String, _ rows: [WorktreeGroup]) -> some View {
@@ -118,7 +133,10 @@ struct WorktreesView: View {
     }
 
     private func filter(_ value: WorktreeFilter, _ count: Int) -> some View {
-        Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { model.worktreeFilter = value } } label: {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { model.worktreeFilter = value }
+            if value == .merged { model.openMerged() }
+        } label: {
             HStack(spacing: 4) {
                 Text(value.rawValue).foregroundStyle(model.worktreeFilter == value ? theme.ink : theme.muted)
                 Text("\(count)").font(.mono(11)).foregroundStyle(theme.dim)

@@ -25,7 +25,7 @@ Background operation is explicit and continues when the window closes, within th
 - Clean complete, verified generated directories belonging exclusively to eligible inactive worktrees. Selective Cargo-internal pruning is deferred.
 - Never infer disposability from a directory's name alone.
 - Permanent deletion of authorized generated output reclaims storage; rebuilding is its recovery mechanism. History is an audit record, not an undo mechanism.
-- Whole-worktree removal, branch deletion, source deletion, and terminating builds are outside version one.
+- Whole-worktree removal is review-only, limited to linked worktrees whose work is merged, and keeps the branch so the worktree can be restored. It is never automatic. Branch deletion, other source deletion, and terminating builds stay out of scope.
 
 Observation cannot provide an absolute guarantee against concurrent work. A process may start between the final inspection and deletion. The app must communicate its protection as conservative and best effort, and preserve candidates whenever inspection is incomplete or contradictory.
 

@@ -65,6 +65,26 @@ enum Demo {
            protectedCaches: [home + "/.cargo", home + "/.npm", home + "/.bun", home + "/Library/pnpm", home + "/Library/Caches/Mozilla.sccache"],
            volume: "Macintosh HD")
         model.hasScanned = true
+        func status(_ repo: String, _ folder: String, _ branch: String?, _ verdict: WorktreeVerdict, rule: WorktreeRule? = nil, reason: String? = nil, evidence: String? = nil,
+                    env: [String] = [], other: [String] = [], gb: Double = 0, days: Double = 0) -> WorktreeStatus {
+            .init(top: trees + "/" + repo + "/" + folder, root: trees, repository: repo, common: code + "/" + repo + "/.git", branch: branch, head: "demo", verdict: verdict,
+                  rule: rule, reason: reason, evidence: evidence, envFiles: env, otherIgnored: other, bytes: Int64(gb * 1e9), lastUsed: now.addingTimeInterval(-days * 86400))
+        }
+        model.worktrees = [
+            status("atlas", "fitment-cache", "fitment-cache", .ready, evidence: "PR #812 merged", env: [".env"], gb: 46.8, days: 12),
+            status("atlas", "fix-pricing", "fix/pricing", .ready, evidence: "In main", gb: 39.1, days: 9),
+            status("ledger", "visits-sync", "visits-sync", .ready, evidence: "Part of PR #604", gb: 16.4, days: 8),
+            status("t3code", "t3-77c1d09a", nil, .ready, evidence: "In staging", gb: 0.3, days: 15),
+            status("headroom", "ui-pass", "ui-pass", .needsLook, evidence: "PR #41 merged", other: ["test-shots/", "notes.md"], gb: 13.5, days: 11),
+            status("ledger", "export-csv", "export-csv", .kept, rule: .recentlyUsed, reason: "Merged, can go in 3 days", evidence: "PR #611 merged", gb: 2.6, days: 4),
+            status("t3code", "fix-sse-reconnect", "fix/sse-reconnect", .kept, rule: .uncommitted, reason: "2 uncommitted changes", gb: 5.4),
+            status("orbit", "t3-20dd7483", "schedule-settled", .kept, rule: .uncommitted, reason: "12 uncommitted changes", gb: 62.4),
+            status("t3code", "spike-sqlite-wal", "spike/sqlite-wal", .kept, rule: .onlyOnThisMac, reason: "3 commits only on this Mac", gb: 10.2),
+            status("t3code", "feat-thread-handoff", "feat/thread-handoff", .kept, rule: .openPullRequest, reason: "PR #277 is still open", gb: 6.1),
+            status("t3code", "t3-19c2b0d4", "wt/codex-19c2", .kept, rule: .inUse, reason: "In use by bun (pid 51807)", gb: 3.2),
+            status("t3code", "release-0.31", "release/0.31", .kept, rule: .locked, reason: "Locked in Git", gb: 1.6),
+            status("t3code", "t3code", "main", .kept, rule: .mainCheckout, reason: "Main checkout", gb: 4.1),
+        ]
 
         // Fourteen days of free space: steep daily drops until nightly sweeps start on day nine.
         var samples: [SpaceSample] = [], history: [HistoryEntry] = []
@@ -89,6 +109,19 @@ enum Demo {
             }
         }
         model.history = history
+    }
+
+    /// Plays a worktree removal without deleting anything.
+    static func simulateRemoval(_ model: AppModel) {
+        model.removalTask = Task { @MainActor in
+            for candidate in model.removal?.candidates ?? [] {
+                try? await Task.sleep(for: .milliseconds(400))
+                if Task.isCancelled { break }
+                model.recordRemoval(HistoryEntry(id: UUID().uuidString, date: Date(), path: candidate.top, outcome: "Cleaned", detail: "Demo: nothing was removed.",
+                                                 bytes: candidate.bytes, run: "demo", automatic: false))
+            }
+            model.removal?.finished = true
+        }
     }
 
     /// Plays a cleanup without deleting anything. One folder becomes active mid-run and is skipped.

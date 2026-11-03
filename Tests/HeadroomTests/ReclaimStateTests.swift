@@ -44,4 +44,42 @@ final class ReclaimStateTests: XCTestCase {
         sweep.failed = true
         XCTAssertFalse(sweep.succeeded)
     }
+
+    @MainActor
+    func testReadyWorktreesStartCheckedAndOthersDoNot() {
+        let model = AppModel(demo: true)
+        XCTAssertFalse(model.readyWorktrees.isEmpty)
+        XCTAssertTrue(model.readyWorktrees.allSatisfy(model.isChosen))
+        XCTAssertFalse(model.lookWorktrees.contains(where: model.isChosen))
+        XCTAssertFalse(model.keptWorktrees.contains(where: model.isChosen))
+        let kept = model.keptWorktrees[0], look = model.lookWorktrees[0], ready = model.readyWorktrees[0]
+        model.toggleChosen(kept)
+        XCTAssertFalse(model.isChosen(kept), "Kept worktrees can't be chosen")
+        model.toggleChosen(look)
+        XCTAssertTrue(model.isChosen(look))
+        model.toggleChosen(ready)
+        XCTAssertFalse(model.isChosen(ready))
+    }
+
+    @MainActor
+    func testCleanNowCannotReplaceTheRemovalScreen() {
+        let model = AppModel(demo: true)
+        model.removal = WorktreeRemovalState(candidates: [model.readyWorktrees[0]])
+        model.screen = .worktreeRemoval
+        XCTAssertTrue(model.busy)
+        model.cleanNow()
+        XCTAssertEqual(model.screen, .worktreeRemoval)
+    }
+
+    @MainActor
+    func testWorktreeRemovalDropsOnlyWhatWasRemoved() {
+        let model = AppModel(demo: true)
+        let removed = model.readyWorktrees[0], skipped = model.readyWorktrees[1]
+        model.removal = WorktreeRemovalState(candidates: [removed, skipped])
+        model.recordRemoval(HistoryEntry(id: "a", date: Date(), path: removed.top, outcome: "Cleaned", detail: "", bytes: removed.bytes, run: "test", automatic: false))
+        model.recordRemoval(HistoryEntry(id: "b", date: Date(), path: skipped.top, outcome: "Skipped", detail: "2 uncommitted changes", bytes: 0, run: "test", automatic: false))
+        XCTAssertFalse(model.worktrees.contains { $0.top == removed.top })
+        XCTAssertTrue(model.worktrees.contains { $0.top == skipped.top })
+        XCTAssertEqual(model.removal?.freed, removed.bytes)
+    }
 }
