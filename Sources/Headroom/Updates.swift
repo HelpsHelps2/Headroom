@@ -59,7 +59,7 @@ final class Updates: NSObject, SPUUpdaterDelegate, SPUStandardUserDriverDelegate
     /// Installs a downloaded update unless Headroom is busy or in use. Called when Headroom goes to the background and on each scan tick.
     func installIfIdle() {
         let model = AppModel.shared
-        guard installNow != nil, model.sweep == nil, !model.scanning, !NSApp.isActive else { return }
+        guard installNow != nil, !model.busy, !model.scanning, !NSApp.isActive else { return }
         restart()
     }
 

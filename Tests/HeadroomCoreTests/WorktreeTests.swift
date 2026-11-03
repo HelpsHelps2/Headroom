@@ -396,6 +396,20 @@ final class WorktreeTests: XCTestCase {
         XCTAssertEqual(entries.first?.outcome, "Skipped", entries.first?.detail ?? "")
         XCTAssertTrue(f.exists(inner.appendingPathComponent("README.md")))
     }
+    func testBuildFinishedAfterTheScanRestartsTheWait() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("built")
+        let engine = try f.engine()
+        _ = try await f.survey(engine)
+        let plan = try await engine.planWorktreeRemoval(tops: [tree.path])
+        let output = tree.appendingPathComponent("target/debug/out.bin")
+        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: output)
+        // The engine's clock runs 8 days ahead, so this is "just now" to it.
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(8 * 86400)], ofItemAtPath: output.path)
+        let entries = try await engine.removeWorktrees(plan)
+        XCTAssertEqual(entries.first?.outcome, "Skipped", entries.first?.detail ?? "")
+        XCTAssertTrue(f.exists(output))
+    }
     func testPinningAfterReviewKeepsTheWorktree() async throws {
         let f = try RepositoryFixture(), tree = try f.worktree("done")
         let engine = try f.engine()

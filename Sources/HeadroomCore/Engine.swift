@@ -137,7 +137,7 @@ public actor Engine {
                 }
                 let repository = inspector.repository(top: reviewed.top, now: clock())
                 let fresh = inspector.inspect(top: reviewed.top, root: reviewed.root, repository: repository, preferences: preferences,
-                                              activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock())
+                                              activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock(), remeasure: true)
                 guard fresh.verdict != .kept else { throw HeadroomError.message(fresh.reason ?? "It no longer meets the rules.") }
                 guard fresh.head == reviewed.head else { throw HeadroomError.message("Its commit changed since review.") }
                 // Everything unrestorable that goes must have been on the review screen.

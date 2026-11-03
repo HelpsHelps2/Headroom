@@ -217,8 +217,9 @@ public struct WorktreeInspector: Sendable {
     }
 
     /// Applies the rules to one worktree. Unknown or failed checks always keep it.
+    /// `remeasure` walks build output too instead of trusting the last scan, so a build that finished since then counts as use.
     func inspect(top: String, root: String, repository: RepositoryFacts?, preferences: Preferences, activity: ActivitySnapshot,
-                 artifacts: [Artifact], known: [String], now: Date) -> WorktreeStatus {
+                 artifacts: [Artifact], known: [String], now: Date, remeasure: Bool = false) -> WorktreeStatus {
         let own = artifacts.filter { $0.worktree?.top == top || ($0.worktree == nil && Paths.contains(top, $0.path)) }
         let builds = own.reduce(0) { $0 + $1.bytes }
         var status = WorktreeStatus(top: top, root: root, repository: repository?.name ?? URL(fileURLWithPath: top).lastPathComponent,
@@ -275,10 +276,10 @@ public struct WorktreeInspector: Sendable {
         status.envFiles = env.sorted(); status.otherIgnored = other.sorted()
 
         var measurement: TreeMeasurement
-        do { measurement = try FileInspection.measure(top, allowLinks: true, skipping: ["node_modules", "target"]) }
+        do { measurement = try FileInspection.measure(top, allowLinks: true, skipping: remeasure ? [] : ["node_modules", "target"]) }
         catch { return keep(.inspectionFailed, "Couldn't inspect its files") }
-        status.bytes = builds + measurement.bytes
-        var used = [measurement.latestFileWrite] + own.map(\.latestWrite)
+        status.bytes = remeasure ? measurement.bytes : builds + measurement.bytes
+        var used = [measurement.latestFileWrite] + (remeasure ? [] : own.map(\.latestWrite))
         for name in ["index", "HEAD"] {
             if let value = try? FileInspection.metadata(directories.gitDir + "/" + name) { used.append(FileInspection.date(value)) }
         }

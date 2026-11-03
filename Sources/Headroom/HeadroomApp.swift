@@ -136,10 +136,10 @@ struct MenuContent: View {
             Button("Clean Now… \(Format.bytes(model.reclaimable + model.recentBytes))") {
                 model.screen = .main; model.cleanNow(); openWindow(id: "main"); NSApp.activate()
             }
-            .disabled(model.sweep != nil)
+            .disabled(model.busy)
         }
         Button("Scan Now") { Task { await model.scan() } }
-            .disabled(model.scanning || model.demo || model.preferences.roots.isEmpty)
+            .disabled(model.scanning || model.busy || model.demo || model.preferences.roots.isEmpty)
         UpdateMenuItems()
         if model.preferences.scheduled {
             Button(model.preferences.paused ? "Resume Automatic Cleanup" : "Pause Automatic Cleanup") { model.togglePaused() }

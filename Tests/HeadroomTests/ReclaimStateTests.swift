@@ -62,6 +62,16 @@ final class ReclaimStateTests: XCTestCase {
     }
 
     @MainActor
+    func testCleanNowCannotReplaceTheRemovalScreen() {
+        let model = AppModel(demo: true)
+        model.removal = WorktreeRemovalState(candidates: [model.readyWorktrees[0]])
+        model.screen = .worktreeRemoval
+        XCTAssertTrue(model.busy)
+        model.cleanNow()
+        XCTAssertEqual(model.screen, .worktreeRemoval)
+    }
+
+    @MainActor
     func testWorktreeRemovalDropsOnlyWhatWasRemoved() {
         let model = AppModel(demo: true)
         let removed = model.readyWorktrees[0], skipped = model.readyWorktrees[1]

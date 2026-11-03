@@ -188,6 +188,8 @@ final class AppModel {
     var runs: [SweepRun] {
         Dictionary(grouping: history, by: \.run).map { SweepRun(id: $0.key, entries: $0.value) }.sorted { $0.date > $1.date }
     }
+    /// A cleanup or worktree removal owns the screen until a person closes it.
+    var busy: Bool { sweep != nil || removal != nil }
     var scopedWorktrees: [WorktreeStatus] { worktrees.filter { selectedRepository == nil || $0.repository == selectedRepository } }
     var readyWorktrees: [WorktreeStatus] { scopedWorktrees.filter { $0.verdict == .ready } }
     var lookWorktrees: [WorktreeStatus] { scopedWorktrees.filter { $0.verdict == .needsLook } }
@@ -223,7 +225,7 @@ final class AppModel {
     }
 
     func scan() async {
-        guard let engine, !scanning, sweep == nil, removal == nil, !preferences.roots.isEmpty else { return }
+        guard let engine, !scanning, !busy, !preferences.roots.isEmpty else { return }
         scanning = true
         let revision = inventoryRevision
         defer { scanning = false }
@@ -244,7 +246,7 @@ final class AppModel {
 
     /// Worktree verdicts run less often than scans: every rule is applied again before anything is removed, so an older list can't remove the wrong thing.
     func refreshWorktrees(force: Bool = false) async {
-        guard let engine, !surveying, removal == nil else { return }
+        guard let engine, !surveying, !busy else { return }
         if !force, let surveyedAt, Date().timeIntervalSince(surveyedAt) < 1800 { return }
         surveying = true
         defer { surveying = false }
@@ -299,7 +301,7 @@ final class AppModel {
 
     private func tick() async {
         Updates.shared.installIfIdle()
-        guard sweep == nil, removal == nil, !scanning, !preferences.roots.isEmpty else { return }
+        guard !busy, !scanning, !preferences.roots.isEmpty else { return }
         await scan()
         guard preferences.scheduled, !preferences.paused, let engine else { return }
         do {
@@ -343,7 +345,7 @@ final class AppModel {
 
     func startWorktreeRemoval() {
         let list = worktreeReview
-        guard !list.isEmpty, removal == nil, sweep == nil else { return }
+        guard !list.isEmpty, !busy else { return }
         removal = WorktreeRemovalState(candidates: list)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { screen = .worktreeRemoval }
         if demo { Demo.simulateRemoval(self); return }
@@ -446,6 +448,7 @@ final class AppModel {
 
     /// Opens the review for `scope`. With `skippingWait`, output only waiting out the keep window joins the plan.
     func openReview(_ scope: [Artifact], skippingWait: Bool = false) {
+        guard !busy else { return }
         review = scope.filter { $0.eligible(skippingWait: skippingWait) }.sorted { ($0.worktree?.top ?? $0.project, -$0.bytes) < ($1.worktree?.top ?? $1.project, -$1.bytes) }
         let tops = Set(scope.map { $0.worktree?.top ?? $0.project })
         reviewKept = kept.filter { tops.contains($0.worktree?.top ?? $0.project) && !review.contains($0) }
