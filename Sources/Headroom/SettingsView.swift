@@ -73,10 +73,13 @@ struct SettingsView: View {
                             choices("Alert when free space is under", detail: "Sends a notification if cleanup doesn't fix it",
                                     [0, 25, 50, 100, 200], selected: model.preferences.lowSpaceGB,
                                     format: { $0 == 0 ? "Off" : "\(Int($0)) GB" }) { model.setLowSpace($0) }
-                            if model.notificationsDenied {
-                                Text("Notifications are off for Headroom in System Settings.")
+                            if let problem = model.notificationProblem {
+                                Text(problem)
                                     .font(.sans(10.5, .medium)).foregroundStyle(theme.accent)
                             }
+                            let line = LowSpace.displayLine(model.preferences)
+                            Text("The menu bar ring turns amber under \(Format.glance(line * 2)) and red under \(Format.glance(line)).")
+                                .font(.sans(10.5)).foregroundStyle(theme.muted)
                             let canClean = model.preferences.scheduled && model.preferences.lowSpaceGB > 0
                             setting("Clean right away when low", detail: canClean
                                     ? "Skips the wait between cleanups, largest first, until \(Int(model.preferences.lowSpaceGB * 2)) GB is free. Same auto folders, unused time, and protections."

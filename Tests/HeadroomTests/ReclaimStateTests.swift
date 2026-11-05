@@ -83,6 +83,29 @@ final class ReclaimStateTests: XCTestCase {
         XCTAssertEqual(model.removal?.freed, removed.bytes)
     }
 
+    func testGlanceDropsDecimalsUntilEveryGigabyteCounts() {
+        XCTAssertEqual(Format.glance(173_707_198_464), "174 GB")
+        XCTAssertEqual(Format.glance(10_000_000_000), "10 GB")
+        XCTAssertEqual(Format.glance(7_400_000_000), "7.4 GB")
+        XCTAssertEqual(Format.glance(850_000_000), "850 MB")
+        XCTAssertEqual(Format.glance(1_200_000_000_000), "1.20 TB")
+    }
+
+    @MainActor
+    func testWindowAndMenuBarUseTheSameBands() {
+        let model = AppModel(demo: true)
+        model.inventory.capacity = 994_000_000_000
+        model.inventory.available = 174_000_000_000
+        model.preferences.lowSpaceGB = 50
+        XCTAssertEqual(model.statusText, "Plenty of room", "83% full, but 174 GB is not pressure")
+        XCTAssertTrue(model.calm)
+        model.inventory.available = 60_000_000_000
+        XCTAssertEqual(model.statusText, "Disk filling up")
+        XCTAssertFalse(model.calm)
+        model.inventory.available = 40_000_000_000
+        XCTAssertEqual(model.statusText, "Disk pressure high")
+    }
+
     func testLowSpaceMessageSaysWhetherAnythingCanBeCleaned() {
         XCTAssertEqual(AppModel.lowSpaceMessage(free: 38_000_000_000, cleanable: 64_000_000_000), "38.0 GB free. 64.0 GB of build output can be cleaned.")
         XCTAssertEqual(AppModel.lowSpaceMessage(free: 38_000_000_000, cleanable: 0), "38.0 GB free. Headroom has no build output ready to clean.")

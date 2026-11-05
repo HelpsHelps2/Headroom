@@ -425,6 +425,21 @@ final class LowSpaceTests: XCTestCase {
         p.lowSpaceGB = 0
         XCTAssertFalse(LowSpace.isLow(.init(capacity: 1_000_000_000_000, available: 0), p))
     }
+    func testLevelsFollowTheAlertLevel() {
+        var p = Preferences(); p.lowSpaceGB = 50
+        let level = { (gb: Int64) in LowSpace.level(.init(capacity: 1_000_000_000_000, available: gb * 1_000_000_000), p) }
+        XCTAssertEqual(level(174), .fine)
+        XCTAssertEqual(level(100), .fine)
+        XCTAssertEqual(level(99), .tight)
+        XCTAssertEqual(level(50), .tight)
+        XCTAssertEqual(level(49), .low)
+        p.lowSpaceGB = 100
+        XCTAssertEqual(level(174), .tight, "moves with the setting")
+        p.lowSpaceGB = 0
+        XCTAssertEqual(level(49), .low, "alerts off still shows the pressure")
+        XCTAssertFalse(LowSpace.isLow(.init(capacity: 1_000_000_000_000, available: 49_000_000_000), p), "but doesn't count as low")
+        XCTAssertEqual(LowSpace.level(.init(capacity: 0, available: 0), p), .fine, "a failed reading is not pressure")
+    }
     func testAlertsOnceThenOnlyWhenWorseOrADayLater() {
         var alerts = LowSpaceAlerts(), p = Preferences(); p.lowSpaceGB = 50
         let start = Date(), gb: Int64 = 1_000_000_000
