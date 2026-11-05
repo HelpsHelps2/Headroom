@@ -106,11 +106,10 @@ public struct Scanner: Sendable {
         }
         if let failure = activity.failure { issues.append(failure) }
         let diskPath = preferences.roots.first?.path ?? home
-        let space = (try? fm.attributesOfFileSystem(forPath: diskPath)) ?? [:]
+        let space = DiskSpace.read(path: diskPath)
         let volume = (try? URL(fileURLWithPath: diskPath).resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName ?? ""
         return .init(artifacts: results.with { $0 }.sorted { $0.bytes > $1.bytes }, issues: Array(Set(issues)).sorted(), scannedAt: now,
-                     capacity: (space[.systemSize] as? NSNumber)?.int64Value ?? 0,
-                     available: (space[.systemFreeSize] as? NSNumber)?.int64Value ?? 0,
+                     capacity: space.capacity, available: space.available,
                      protectedCaches: protectedCaches, volume: volume, worktrees: worktrees)
     }
 

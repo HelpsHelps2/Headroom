@@ -236,7 +236,8 @@ struct DiskView: View {
         let on = model.preferences.scheduled && !model.preferences.paused && model.preferences.roots.contains(where: \.automatic)
         return HStack(spacing: 8) {
             Group {
-                if !model.preferences.scheduled || !model.preferences.roots.contains(where: \.automatic) { Text("Automatic cleanup off") }
+                if model.preferences.automaticHasNoFolders { Text("No folders set to clean automatically") }
+                else if !model.preferences.scheduled || !model.preferences.roots.contains(where: \.automatic) { Text("Automatic cleanup off") }
                 else if model.preferences.paused { Text("Automatic cleanup paused") }
                 else { Text("Cleans automatically after ") + Text(Format.hours(model.preferences.keepHours)).font(.mono(11.5, .medium)).foregroundColor(theme.ink) + Text(" unused") }
             }

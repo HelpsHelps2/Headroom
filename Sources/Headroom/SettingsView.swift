@@ -50,6 +50,11 @@ struct SettingsView: View {
                             setting("Clean automatically", detail: "Deletes eligible output without a review") {
                                 Switch(isOn: model.preferences.scheduled, label: "Clean automatically") { model.requestSchedule(!model.preferences.scheduled) }
                             }
+                            if model.preferences.automaticHasNoFolders {
+                                Text("Nothing will be cleaned: no folder is set to auto. Turn on auto for a folder above.")
+                                    .font(.sans(10.5, .medium)).foregroundStyle(theme.accent)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             choices("Clean when unused for", detail: "No builds, installs, or open files for this long",
                                     [1, 2, 6, 12, 24, 72], selected: model.preferences.keepHours) { model.setKeepHours($0) }
                             choices("Clean at most every", detail: "Cleans once a folder qualifies, at most this often",
@@ -59,6 +64,26 @@ struct SettingsView: View {
                                 Switch(isOn: model.preferences.paused, label: "Pause automatic cleanup") { model.togglePaused() }
                             }
                             .disabled(!model.preferences.scheduled).opacity(model.preferences.scheduled ? 1 : 0.5)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    SectionLabel(text: "Low disk space").padding(.top, 10)
+                    Card {
+                        VStack(alignment: .leading, spacing: 10) {
+                            choices("Alert when free space is under", detail: "Sends a notification if cleanup doesn't fix it",
+                                    [0, 25, 50, 100, 200], selected: model.preferences.lowSpaceGB,
+                                    format: { $0 == 0 ? "Off" : "\(Int($0)) GB" }) { model.setLowSpace($0) }
+                            if model.notificationsDenied {
+                                Text("Notifications are off for Headroom in System Settings.")
+                                    .font(.sans(10.5, .medium)).foregroundStyle(theme.accent)
+                            }
+                            let canClean = model.preferences.scheduled && model.preferences.lowSpaceGB > 0
+                            setting("Clean right away when low", detail: canClean
+                                    ? "Skips the wait between cleanups, largest first, until \(Int(model.preferences.lowSpaceGB * 2)) GB is free. Same auto folders, unused time, and protections."
+                                    : "Needs Clean automatically and an alert level") {
+                                Switch(isOn: model.preferences.cleansWhenLow, label: "Clean right away when low") { model.toggleCleansWhenLow() }
+                            }
+                            .disabled(!canClean).opacity(canClean ? 1 : 0.5)
                         }
                         .padding(.vertical, 3)
                     }
@@ -129,7 +154,8 @@ struct SettingsView: View {
         }
     }
 
-    private func choices(_ title: String, detail: String, _ hours: [Double], selected: Double, action: @escaping (Double) -> Void) -> some View {
+    private func choices(_ title: String, detail: String, _ hours: [Double], selected: Double, format: @escaping (Double) -> String = Format.hours,
+                         action: @escaping (Double) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.sans(12, .medium))
@@ -138,7 +164,7 @@ struct SettingsView: View {
             HStack(spacing: 0) {
                 ForEach(hours, id: \.self) { value in
                     Button { action(value) } label: {
-                        Text(Format.hours(value)).font(.mono(10.5, .medium))
+                        Text(format(value)).font(.mono(10.5, .medium))
                             .foregroundStyle(selected == value ? theme.ink : theme.muted)
                             .frame(maxWidth: .infinity).frame(height: 20)
                             .background(selected == value ? theme.segmentOn : .clear, in: RoundedRectangle(cornerRadius: 5))

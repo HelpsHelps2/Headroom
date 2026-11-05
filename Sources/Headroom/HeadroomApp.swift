@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in await Snapshots.run(into: directory) }
         } else if !AppModel.shared.demo {
             Updates.shared.start()
+            LowSpaceNotifier.shared.start()
         }
     }
 }
@@ -116,6 +117,10 @@ struct MenuLabel: View {
             .onAppear {
                 guard !opened else { return }
                 opened = true
+                openWindow(id: "main")
+                NSApp.activate()
+            }
+            .onChange(of: model.windowRequests) {
                 openWindow(id: "main")
                 NSApp.activate()
             }
