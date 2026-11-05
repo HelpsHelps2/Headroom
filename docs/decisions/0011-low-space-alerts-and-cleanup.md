@@ -18,10 +18,16 @@ Say plainly when automatic cleanup is on but no folder is marked automatic, rath
 
 ## Consequences
 
-Free space is read once a minute, which is cheap, while scans keep their existing schedule. Crossing the level starts one early scan and check, so a cleanup that resolves the problem stays quiet. Scans stay on their schedule until then, and observation requirements are unchanged, so on a Mac without automatic cleanup enabled a low-space event alerts but cleans nothing.
+The low-space check runs once a minute and scans keep their existing schedule. Crossing the level starts one early scan and check, so a cleanup that resolves the problem stays quiet. Scans stay on their schedule until then, and observation requirements are unchanged, so on a Mac without automatic cleanup enabled a low-space event alerts but cleans nothing.
 
 The target is best effort. Sizes are estimates, and if a run falls short the next check, about five minutes later, measures again and continues. A run that removes nothing waits an hour before trying again so History does not fill with repeated skips.
 
 Headroom can only clean what its protections allow, so low space can persist with folders held by live processes. The notification says so rather than escalating.
 
-macOS asks for notification permission the first time an alert is needed. If it is denied, Settings says so; alerts are not delivered any other way.
+Headroom asks for notification permission at launch rather than at the first alert, when the disk is already full and a missed prompt means no warning. The request finishes only when the prompt is answered, so alerts check the current permission instead of waiting on it. If permission is denied, or macOS refuses because the app isn't in Applications, Settings says so; alerts are not delivered any other way.
+
+## Reading free space at a glance
+
+The menu bar shows free space and is refreshed every 10 seconds, because reading it is cheap and it moves tens of gigabytes between scans. The number is in whole gigabytes above 10 GB so it doesn't flicker.
+
+Pressure has three bands, built on the alert level so there is one setting to understand: plenty of room at or above twice the level, tight below that, low below the level. They are the same two lines that start alerts and stop cleanup. The ring color and the Disk screen's label both use them, replacing the earlier percentage-full thresholds, which called a large disk with 170 GB free "filling up". With alerts off, the bands use the default level: turning off the interruption doesn't turn off the reading. On a small disk the default may show amber most of the time; lowering the level moves the bands with it.

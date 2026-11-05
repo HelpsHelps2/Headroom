@@ -12,6 +12,9 @@ public struct DiskSpace: Equatable, Sendable {
     }
 }
 
+/// How much room is left, at a glance. Uses the same two lines as alerts and cleanup, so there is one setting to understand.
+public enum SpaceLevel: Equatable, Sendable { case fine, tight, low }
+
 /// When free space counts as low and how much to clean. Which folders may be removed stays with the normal
 /// eligibility checks: low space changes when and how much is cleaned, never what is protected.
 public enum LowSpace {
@@ -22,6 +25,16 @@ public enum LowSpace {
     public static func isLow(_ space: DiskSpace, _ preferences: Preferences) -> Bool {
         let line = threshold(preferences)
         return line > 0 && space.capacity > 0 && space.available < line
+    }
+    /// The level the display uses. Turning alerts off stops the interruptions, not the reading, so it falls back to the default.
+    public static func displayLine(_ preferences: Preferences) -> Int64 {
+        let line = threshold(preferences)
+        return line > 0 ? line : threshold(Preferences())
+    }
+    public static func level(_ space: DiskSpace, _ preferences: Preferences) -> SpaceLevel {
+        guard space.capacity > 0 else { return .fine }
+        let line = displayLine(preferences)
+        return space.available < line ? .low : space.available < line * 2 ? .tight : .fine
     }
     /// The largest folders that bring free space to the target by their estimated sizes. An estimate that falls short
     /// is corrected by the next check, which measures free space again.

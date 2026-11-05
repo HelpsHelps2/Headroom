@@ -11,6 +11,10 @@ enum Format {
         return (String(format: "%.0f", value / 1e3), "KB")
     }
     static func bytes(_ bytes: Int64) -> String { let p = parts(bytes); return p.number + " " + p.unit }
+    /// For a number that keeps changing: whole gigabytes, so it doesn't flicker, and a decimal only once every gigabyte counts.
+    static func glance(_ bytes: Int64) -> String {
+        bytes >= 10_000_000_000 && bytes < 1_000_000_000_000 ? String(format: "%.0f GB", Double(bytes) / 1e9) : self.bytes(bytes)
+    }
     /// Compact form for dense logs, e.g. `14.2G`.
     static func compact(_ bytes: Int64) -> String { let p = parts(bytes); return p.number + String(p.unit.prefix(1)) }
     static func age(_ date: Date, now: Date = Date()) -> String {

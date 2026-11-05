@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+
+- The menu bar shows free space next to the ring, updated every 10 seconds, including while scanning or cleaning.
+- The ring tells you how much pressure you're under: normal with plenty of room, amber under twice your alert level, and red under it. At the default 50 GB, that's amber under 100 GB and red under 50 GB. The Disk screen's label uses the same bands instead of how full the disk is by percentage, so a large disk with lots of room left no longer reads as filling up.
+- Headroom asks for notification permission when it opens, not at the first alert. An unanswered prompt no longer holds up later low-space checks.
+- Settings says so when macOS blocks notifications because Headroom isn't in Applications.
+
 ## 0.5.0
 
 - Low disk space alerts. When free space falls under the level you choose (50 GB by default), Headroom sends a notification saying how much build output can be cleaned. It alerts once, then again only if free space halves or a day passes. Choose the level or turn alerts off in Settings.

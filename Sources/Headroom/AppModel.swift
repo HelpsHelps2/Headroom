@@ -137,13 +137,16 @@ final class AppModel {
     @ObservationIgnored private var engine: Engine?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var spaceTimer: Timer?
+    @ObservationIgnored private var liveTimer: Timer?
+    /// The latest free-space reading, for the menu bar. Apart from `inventory` because the cleanup screens add what they have freed to that one.
+    var liveSpace: DiskSpace?
     @ObservationIgnored private var lowSpaceAlerts = LowSpaceAlerts()
     @ObservationIgnored private var wasLow = false
     @ObservationIgnored private var checkingSpace = false
     @ObservationIgnored private var ticking = 0
     /// Counts requests to open the window from outside a view, such as clicking a notification.
     var windowRequests = 0
-    var notificationsDenied = false
+    var notificationProblem: String?
     @ObservationIgnored var sweepTask: Task<Void, Never>?
     @ObservationIgnored private var sleptAt: Date?
     @ObservationIgnored private var powerObservers: [NSObjectProtocol] = []
@@ -155,9 +158,11 @@ final class AppModel {
         observeSleep()
         Task {
             await reload()
+            // Before the scan, which can take a while: the menu bar shouldn't wait for it.
+            await refreshSpace()
+            startSpaceWatch()
             if preferences.roots.isEmpty { await suggestFolders() } else { await scan() }
             restartTimer()
-            startSpaceWatch()
         }
     }
 
@@ -171,7 +176,8 @@ final class AppModel {
     /// Output kept only by the keep window, which Clean Now removes too.
     var recent: [Artifact] { visible.filter(\.waiting) }
     var recentBytes: Int64 { recent.reduce(0) { $0 + $1.bytes } }
-    var pressure: Double { inventory.capacity > 0 ? 1 - Double(inventory.available) / Double(inventory.capacity) : 0 }
+    var currentSpace: DiskSpace? { liveSpace ?? (inventory.capacity > 0 ? .init(capacity: inventory.capacity, available: inventory.available) : nil) }
+    var spaceLevel: SpaceLevel { currentSpace.map { LowSpace.level($0, preferences) } ?? .fine }
     var groups: [WorktreeGroup] {
         Dictionary(grouping: visible) { $0.worktree?.top ?? $0.project }
             .map { WorktreeGroup(top: $0.key, info: $0.value.first?.worktree, artifacts: $0.value.sorted { $0.bytes > $1.bytes }) }
@@ -216,11 +222,9 @@ final class AppModel {
     var statusText: String {
         if preferences.roots.isEmpty { return suggestions.isEmpty ? "Choose folders to watch" : "\(suggestions.count) folders found" }
         if scanning && !hasScanned { return "Scanning" }
-        if pressure >= 0.9 { return "Disk pressure high" }
-        if pressure >= 0.75 { return "Disk filling up" }
-        return "Plenty of room"
+        return spaceLevel.title
     }
-    var calm: Bool { !preferences.roots.isEmpty && hasScanned && pressure < 0.75 }
+    var calm: Bool { !preferences.roots.isEmpty && hasScanned && spaceLevel == .fine }
 
     // MARK: Engine
 
@@ -315,10 +319,23 @@ final class AppModel {
             Task { @MainActor in await self?.checkSpace() }
         }
         spaceTimer?.tolerance = 15
+        liveTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refreshSpace() }
+        }
+        liveTimer?.tolerance = 3
+    }
+
+    /// Runs during scans and cleanups too, which is when free space moves most. Changes nothing unless what's shown changes.
+    private func refreshSpace() async {
+        guard let fresh = await readSpace() else { return }
+        if let shown = liveSpace, Format.glance(shown.available) == Format.glance(fresh.available),
+           LowSpace.level(shown, preferences) == LowSpace.level(fresh, preferences) { return }
+        liveSpace = fresh
+        if sweep == nil, removal == nil, inventory.capacity > 0 { inventory.available = fresh.available }
     }
 
     private func readSpace() async -> DiskSpace? {
-        guard let path = preferences.roots.first?.path else { return nil }
+        let path = preferences.roots.first?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
         let space = await Task.detached(priority: .utility) { DiskSpace.read(path: path) }.value
         return space.capacity > 0 ? space : nil
     }
@@ -343,7 +360,7 @@ final class AppModel {
         guard ticking == 0, !cleanupRunning, !scanning, lowSpaceAlerts.shouldNotify(space, preferences: preferences, now: Date()) else { return }
         let body = Self.lowSpaceMessage(free: space.available, cleanable: reclaimable + recentBytes)
         if await LowSpaceNotifier.shared.post(title: "Disk space is low", body: body) { lowSpaceAlerts.notified(space, now: Date()) }
-        notificationsDenied = await LowSpaceNotifier.shared.denied
+        notificationProblem = await LowSpaceNotifier.shared.problem
     }
 
     nonisolated static func lowSpaceMessage(free: Int64, cleanable: Int64) -> String {
@@ -365,7 +382,7 @@ final class AppModel {
     }
 
     func windowOpened() {
-        if !demo { Task { notificationsDenied = await LowSpaceNotifier.shared.denied } }
+        if !demo { Task { notificationProblem = await LowSpaceNotifier.shared.problem } }
         guard !demo, !scanning, Date().timeIntervalSince(inventory.scannedAt) > 120 else { return }
         Task { await scan() }
     }

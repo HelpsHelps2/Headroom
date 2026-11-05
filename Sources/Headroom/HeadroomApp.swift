@@ -113,17 +113,20 @@ struct MenuLabel: View {
     @Environment(\.openWindow) private var openWindow
     @State private var opened = false
     var body: some View {
-        Image(nsImage: MenuIcon.image(pressure: model.pressure, scanned: model.hasScanned))
-            .onAppear {
-                guard !opened else { return }
-                opened = true
-                openWindow(id: "main")
-                NSApp.activate()
-            }
-            .onChange(of: model.windowRequests) {
-                openWindow(id: "main")
-                NSApp.activate()
-            }
+        HStack(spacing: 4) {
+            Image(nsImage: MenuIcon.image(space: model.currentSpace, level: model.spaceLevel))
+            if let space = model.currentSpace { Text(Format.glance(space.available)) }
+        }
+        .onAppear {
+            guard !opened else { return }
+            opened = true
+            openWindow(id: "main")
+            NSApp.activate()
+        }
+        .onChange(of: model.windowRequests) {
+            openWindow(id: "main")
+            NSApp.activate()
+        }
     }
 }
 
@@ -131,8 +134,11 @@ struct MenuContent: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
     var body: some View {
+        if let space = model.currentSpace {
+            Text("\(Format.glance(space.available)) free · \(model.spaceLevel.title)")
+        }
         if model.hasScanned {
-            Text("\(Format.bytes(model.reclaimable)) reclaimable · \(Format.bytes(model.inventory.available)) free")
+            Text("\(Format.bytes(model.reclaimable)) reclaimable")
         } else {
             Text(model.preferences.roots.isEmpty ? "No folders watched" : model.scanning ? "Scanning…" : "Not scanned yet")
         }
@@ -170,23 +176,38 @@ struct UpdateMenuItems: View {
     }
 }
 
-/// Menu bar ring showing how full the disk is. Turns amber under pressure.
+extension SpaceLevel {
+    var title: String {
+        switch self {
+        case .fine: "Plenty of room"
+        case .tight: "Disk filling up"
+        case .low: "Disk pressure high"
+        }
+    }
+}
+
+/// Menu bar ring showing how full the disk is. Follows the menu bar's color until space gets tight, then amber, then red.
 enum MenuIcon {
-    static func image(pressure: Double, scanned: Bool) -> NSImage {
-        let high = scanned && pressure >= 0.9
+    static func image(space: DiskSpace?, level: SpaceLevel) -> NSImage {
+        let pressure = space.map { 1 - Double($0.available) / Double(max($0.capacity, 1)) }
+        let warning: NSColor? = switch level {
+        case .fine: nil
+        case .tight: NSColor(red: 0.90, green: 0.64, blue: 0.26, alpha: 1)
+        case .low: NSColor(red: 0.92, green: 0.30, blue: 0.26, alpha: 1)
+        }
         let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
             let center = NSPoint(x: rect.midX, y: rect.midY), radius: CGFloat = 6.5
             let track = NSBezierPath(); track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
             track.lineWidth = 2.2
-            (high ? NSColor.secondaryLabelColor : NSColor.black.withAlphaComponent(0.3)).setStroke(); track.stroke()
+            (warning != nil ? NSColor.secondaryLabelColor : NSColor.black.withAlphaComponent(0.3)).setStroke(); track.stroke()
             let arc = NSBezierPath()
-            arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - 360 * CGFloat(scanned ? max(pressure, 0.04) : 0.25), clockwise: true)
+            arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - 360 * CGFloat(pressure.map { max($0, 0.04) } ?? 0.25), clockwise: true)
             arc.lineWidth = 2.2; arc.lineCapStyle = .round
-            (high ? NSColor(red: 0.90, green: 0.64, blue: 0.26, alpha: 1) : NSColor.black).setStroke(); arc.stroke()
+            (warning ?? NSColor.black).setStroke(); arc.stroke()
             return true
         }
-        image.isTemplate = !high
-        image.accessibilityDescription = "Headroom"
+        image.isTemplate = warning == nil
+        image.accessibilityDescription = "Headroom, \(level.title)"
         return image
     }
 }
