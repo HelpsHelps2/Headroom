@@ -18,7 +18,25 @@ public struct Preferences: Codable, Equatable, Sendable {
     public var scheduled: Bool = false
     public var intervalHours: Double = 24
     public var paused: Bool = false
+    /// Free space under this many gigabytes counts as low, which sends a notification. 0 turns it off.
+    public var lowSpaceGB: Double = 50
+    /// Lets low space start a cleanup before the interval is up. Same folders, wait, and protections as any automatic run.
+    public var cleansWhenLow: Bool = false
     public init() {}
+    /// Settings saved before the low-space options existed have no value for them.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        roots = try values.decode([WatchedRoot].self, forKey: .roots)
+        pinned = try values.decode(Set<String>.self, forKey: .pinned)
+        keepHours = try values.decode(Double.self, forKey: .keepHours)
+        scheduled = try values.decode(Bool.self, forKey: .scheduled)
+        intervalHours = try values.decode(Double.self, forKey: .intervalHours)
+        paused = try values.decode(Bool.self, forKey: .paused)
+        lowSpaceGB = try values.decodeIfPresent(Double.self, forKey: .lowSpaceGB) ?? 50
+        cleansWhenLow = try values.decodeIfPresent(Bool.self, forKey: .cleansWhenLow) ?? false
+    }
+    /// Automatic cleanup is on, but no watched folder allows it, so it can never remove anything.
+    public var automaticHasNoFolders: Bool { scheduled && !roots.isEmpty && !roots.contains(where: \.automatic) }
     public func isPinned(_ project: String) -> Bool { pinned.contains { Paths.contains($0, project) } }
 }
 

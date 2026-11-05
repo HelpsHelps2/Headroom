@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Low disk space alerts. When free space falls under the level you choose (50 GB by default), Headroom sends a notification saying how much build output can be cleaned. It alerts once, then again only if free space halves or a day passes. Choose the level or turn alerts off in Settings.
+- **Clean right away when low**, off by default. With automatic cleanup on, low space starts a cleanup without waiting for **Clean at most every**, largest folders first, until free space reaches twice the alert level. It uses the same auto folders, unused time, and protections as any automatic run.
+- Settings and the Disk screen now say so when automatic cleanup is on but no folder is set to auto, because nothing gets cleaned in that state.
+
 ## 0.4.0
 
 - Remove whole worktrees whose work is already merged. The new **Merged** filter on the Worktrees tab offers one only when its commits are in the default branch, `main`, or `staging`, or part of a pull request merged into one of them; it has no uncommitted changes; and nothing has used it for 7 days. Removal always follows your review and never runs automatically.

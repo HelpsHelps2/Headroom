@@ -82,4 +82,9 @@ final class ReclaimStateTests: XCTestCase {
         XCTAssertTrue(model.worktrees.contains { $0.top == skipped.top })
         XCTAssertEqual(model.removal?.freed, removed.bytes)
     }
+
+    func testLowSpaceMessageSaysWhetherAnythingCanBeCleaned() {
+        XCTAssertEqual(AppModel.lowSpaceMessage(free: 38_000_000_000, cleanable: 64_000_000_000), "38.0 GB free. 64.0 GB of build output can be cleaned.")
+        XCTAssertEqual(AppModel.lowSpaceMessage(free: 38_000_000_000, cleanable: 0), "38.0 GB free. Headroom has no build output ready to clean.")
+    }
 }

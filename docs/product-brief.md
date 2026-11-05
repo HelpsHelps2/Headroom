@@ -37,9 +37,9 @@ The architecture interview verified one concrete example: the originating user's
 
 ## Schedule scope
 
-Version one offers manual execution and a configurable schedule. Disk-pressure thresholds, recovery targets, and emergency escalation are deferred. Pressure never overrides protection.
+Version one offers manual execution and a configurable schedule. Disk-pressure thresholds, recovery targets, and emergency escalation are deferred; [0011](decisions/0011-low-space-alerts-and-cleanup.md) later added a low-space alert and an opt-in cleanup trigger. Pressure never overrides protection.
 
-Scheduled runs operate on the authorized eligible set for their selected roots. Preservation comes from inactivity retention, exclusions, pins, and shared-cache protection. Automatic stopping at a free-space target belongs to the deferred pressure mode; version one must not claim that optimization.
+Scheduled runs operate on the authorized eligible set for their selected roots. Preservation comes from inactivity retention, exclusions, pins, and shared-cache protection. Automatic stopping at a free-space target belongs to the pressure mode added by 0011, which is best effort because sizes are estimates.
 
 ## Experience and personality
 

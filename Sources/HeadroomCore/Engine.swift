@@ -12,6 +12,9 @@ public actor Engine {
     private var worktrees: [WorktreeStatus] = []
     /// Times the Mac slept while this process kept running. Nothing can use a folder then, so these do not break observation.
     private var sleeps: [DateInterval] = []
+    /// A low-space run that removed nothing is not retried every check, which would only fill History with the same skips.
+    private var lowSpaceRetry: Date = .distantPast
+    static let lowSpaceBackoff: TimeInterval = 3600
     /// Longest unobserved awake stretch that keeps an observation continuous.
     static let gapLimit: TimeInterval = 600
 
@@ -90,8 +93,24 @@ public actor Engine {
             artifact.eligible && Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours) &&
                 preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic })
         }
-        guard try claimSchedule(interval: preferences.intervalHours * 3600, ready: !eligible.isEmpty) else { return [] }
+        guard try claimSchedule(interval: preferences.intervalHours * 3600, ready: !eligible.isEmpty) else {
+            return try cleanForLowSpace(eligible: eligible, preferences: preferences, now: now)
+        }
         return try execute(plan(paths: Set(eligible.map(\.path)), automatic: true))
+    }
+    /// Runs before the interval is up when the person opted in and free space is low. It only narrows what the schedule
+    /// would remove anyway: the candidates have already passed every check, including the wait.
+    private func cleanForLowSpace(eligible: [Artifact], preferences: Preferences, now: Date) throws -> [HistoryEntry] {
+        let space = DiskSpace(capacity: inventory.capacity, available: inventory.available)
+        guard preferences.cleansWhenLow, now >= lowSpaceRetry, LowSpace.isLow(space, preferences),
+              let diskPath = preferences.roots.first?.path, let disk = try? FileInspection.metadata(diskPath) else { return [] }
+        // Free space is measured on one volume. Output on another would not help it.
+        let sameVolume = eligible.filter { $0.identity.device == UInt64(disk.st_dev) }
+        let chosen = LowSpace.selection(from: sameVolume, space: space, preferences: preferences)
+        guard !chosen.isEmpty else { return [] }
+        let entries = try execute(plan(paths: Set(chosen.map(\.path)), automatic: true))
+        if !entries.contains(where: { $0.outcome == "Cleaned" }) { lowSpaceRetry = now.addingTimeInterval(Self.lowSpaceBackoff) }
+        return entries
     }
     private func claimSchedule(interval: TimeInterval, ready: Bool) throws -> Bool {
         let lease = try ProcessLease(path: directory.appendingPathComponent("operation.lock").path)

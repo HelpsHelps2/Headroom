@@ -307,6 +307,154 @@ final class EngineTests: XCTestCase {
     }
 }
 
+final class LowSpaceTests: XCTestCase {
+    /// A level above any real disk, so the fixture's volume always counts as low. The interval is long enough never to pass.
+    private func lowPreferences(_ f: Fixture) -> Preferences {
+        var p = f.preferences()
+        p.keepHours = 1; p.intervalHours = 720; p.scheduled = true; p.roots[0].automatic = true
+        p.lowSpaceGB = 100_000; p.cleansWhenLow = true
+        return p
+    }
+    /// Scans and runs the schedule every five minutes, as the app does.
+    private func run(_ engine: Engine, _ clock: Clock, minutes: Int) async throws -> [HistoryEntry] {
+        var entries: [HistoryEntry] = []
+        for _ in 0..<(minutes / 5) {
+            clock.advance(300)
+            _ = try await engine.scan()
+            entries += try await engine.runScheduleIfDue()
+        }
+        return entries
+    }
+    func testLowSpaceCleansBeforeTheIntervalButAfterTheWait() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        try await engine.save(lowPreferences(f))
+        _ = try await engine.scan()
+        _ = try await engine.runScheduleIfDue()
+        let waiting = try await run(engine, clock, minutes: 55)
+        XCTAssertTrue(waiting.isEmpty, "the wait still applies")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+        let cleaned = try await run(engine, clock, minutes: 10)
+        XCTAssertEqual(cleaned.filter { $0.outcome == "Cleaned" }.count, 1)
+        XCTAssertTrue(cleaned.allSatisfy(\.automatic))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testLowSpaceNeedsTheOptIn() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        var p = lowPreferences(f); p.cleansWhenLow = false
+        try await engine.save(p)
+        _ = try await engine.scan(); _ = try await engine.runScheduleIfDue()
+        let entries = try await run(engine, clock, minutes: 90)
+        XCTAssertTrue(entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testLowSpaceKeepsFoldersNotSetToAutomatic() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        var p = lowPreferences(f); p.roots[0].automatic = false
+        try await engine.save(p)
+        _ = try await engine.scan(); _ = try await engine.runScheduleIfDue()
+        let entries = try await run(engine, clock, minutes: 90)
+        XCTAssertTrue(entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testLowSpaceRespectsPauseAndSchedule() async throws {
+        for change in [{ (p: inout Preferences) in p.paused = true }, { (p: inout Preferences) in p.scheduled = false }] {
+            let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+            var p = lowPreferences(f); change(&p)
+            try await engine.save(p)
+            _ = try await engine.scan(); _ = try await engine.runScheduleIfDue()
+            let entries = try await run(engine, clock, minutes: 90)
+            XCTAssertTrue(entries.isEmpty)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+        }
+    }
+    func testLowSpaceNeverOverridesLiveActivity() async throws {
+        let f = try Fixture(), clock = Clock()
+        let engine = try f.engine(activity: .init(paths: [f.project.path]), clock: { clock.now() })
+        try await engine.save(lowPreferences(f))
+        _ = try await engine.scan(); _ = try await engine.runScheduleIfDue()
+        let entries = try await run(engine, clock, minutes: 90)
+        XCTAssertTrue(entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testLowSpaceRunThatRemovesNothingWaitsBeforeRetrying() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        try await engine.save(lowPreferences(f))
+        _ = try await engine.scan(); _ = try await engine.runScheduleIfDue()
+        _ = try await run(engine, clock, minutes: 55)
+        clock.advance(300)
+        _ = try await engine.scan()
+        // Changes after the scan make the executor skip the folder, the same way it would for a build that just started.
+        try Data(repeating: 2, count: 4096).write(to: f.target.appendingPathComponent("debug/deps/new.rlib"))
+        let first = try await engine.runScheduleIfDue()
+        XCTAssertEqual(first.map(\.outcome), ["Skipped"])
+        let second = try await engine.runScheduleIfDue()
+        XCTAssertTrue(second.isEmpty, "backs off instead of repeating the skip")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testSelectionTakesTheLargestUntilTheTarget() {
+        var p = Preferences(); p.lowSpaceGB = 50
+        func artifact(_ name: String, _ gb: Int64) -> Artifact {
+            .init(project: "/p/" + name, path: "/p/\(name)/target", root: "/p", bytes: gb * 1_000_000_000, files: 1, latestWrite: .distantPast,
+                  identity: .init(device: 1, inode: 1), reasons: [], firstObserved: .distantPast)
+        }
+        let eligible = [artifact("small", 5), artifact("large", 40), artifact("medium", 20)]
+        let names = { (available: Int64) in
+            LowSpace.selection(from: eligible, space: .init(capacity: 1_000_000_000_000, available: available * 1_000_000_000), preferences: p).map(\.name)
+        }
+        XCTAssertEqual(names(45), ["large", "medium"], "stops once 100 GB is reached")
+        XCTAssertEqual(names(70), ["large"])
+        XCTAssertEqual(names(0), ["large", "medium", "small"], "takes everything when even that falls short")
+        XCTAssertEqual(names(100), [])
+    }
+    func testAFailedReadingIsNeverLow() {
+        var p = Preferences(); p.lowSpaceGB = 50
+        XCTAssertFalse(LowSpace.isLow(.init(capacity: 0, available: 0), p))
+        XCTAssertTrue(LowSpace.isLow(.init(capacity: 1_000_000_000_000, available: 49_000_000_000), p))
+        XCTAssertFalse(LowSpace.isLow(.init(capacity: 1_000_000_000_000, available: 50_000_000_000), p))
+        p.lowSpaceGB = 0
+        XCTAssertFalse(LowSpace.isLow(.init(capacity: 1_000_000_000_000, available: 0), p))
+    }
+    func testAlertsOnceThenOnlyWhenWorseOrADayLater() {
+        var alerts = LowSpaceAlerts(), p = Preferences(); p.lowSpaceGB = 50
+        let start = Date(), gb: Int64 = 1_000_000_000
+        func notify(_ free: Int64, after hours: Double = 0) -> Bool {
+            alerts.shouldNotify(.init(capacity: 1000 * gb, available: free * gb), preferences: p, now: start.addingTimeInterval(hours * 3600))
+        }
+        XCTAssertFalse(notify(60), "above the line")
+        XCTAssertTrue(notify(40), "first time under")
+        XCTAssertFalse(notify(30, after: 1), "still low, not much worse")
+        XCTAssertTrue(notify(15, after: 2), "free space halved")
+        XCTAssertTrue(notify(15, after: 27), "a day later")
+        XCTAssertFalse(notify(70, after: 28), "recovering")
+        XCTAssertFalse(notify(40, after: 29), "not recovered past the target, so the same episode")
+        XCTAssertFalse(notify(100, after: 30), "recovered")
+        XCTAssertTrue(notify(40, after: 31), "a new episode")
+        XCTAssertFalse(alerts.shouldNotify(.init(capacity: 0, available: 0), preferences: p, now: start.addingTimeInterval(32 * 3600)), "failed reading")
+    }
+    func testSettingsFromBeforeLowSpaceStillLoad() throws {
+        let old = #"{"roots":[{"path":"/p","automatic":true}],"pinned":[],"keepHours":6,"scheduled":true,"intervalHours":6,"paused":false}"#
+        let p = try JSONDecoder().decode(Preferences.self, from: Data(old.utf8))
+        XCTAssertEqual(p.keepHours, 6)
+        XCTAssertEqual(p.roots.first?.automatic, true)
+        XCTAssertEqual(p.lowSpaceGB, 50)
+        XCTAssertFalse(p.cleansWhenLow, "cleaning sooner is never turned on by an update")
+        let again = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(p))
+        XCTAssertEqual(again, p)
+    }
+    func testAutomaticWithNoFoldersIsDetected() {
+        var p = Preferences()
+        XCTAssertFalse(p.automaticHasNoFolders)
+        p.scheduled = true
+        XCTAssertFalse(p.automaticHasNoFolders, "no folders watched yet")
+        p.roots = [.init(path: "/a"), .init(path: "/b")]
+        XCTAssertTrue(p.automaticHasNoFolders)
+        p.roots[1].automatic = true
+        XCTAssertFalse(p.automaticHasNoFolders)
+        p.scheduled = false; p.roots[1].automatic = false
+        XCTAssertFalse(p.automaticHasNoFolders)
+    }
+}
+
 /// An npm project with workspace and `.bin` links and a file hard-linked from a package store.
 final class NodeFixture {
     let base: URL, project: URL, modules: URL, home: URL, state: URL, source: URL, store: URL

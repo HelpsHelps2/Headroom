@@ -136,6 +136,14 @@ final class AppModel {
     let demo: Bool
     @ObservationIgnored private var engine: Engine?
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var spaceTimer: Timer?
+    @ObservationIgnored private var lowSpaceAlerts = LowSpaceAlerts()
+    @ObservationIgnored private var wasLow = false
+    @ObservationIgnored private var checkingSpace = false
+    @ObservationIgnored private var ticking = false
+    /// Counts requests to open the window from outside a view, such as clicking a notification.
+    var windowRequests = 0
+    var notificationsDenied = false
     @ObservationIgnored var sweepTask: Task<Void, Never>?
     @ObservationIgnored private var sleptAt: Date?
     @ObservationIgnored private var powerObservers: [NSObjectProtocol] = []
@@ -149,6 +157,7 @@ final class AppModel {
             await reload()
             if preferences.roots.isEmpty { await suggestFolders() } else { await scan() }
             restartTimer()
+            startSpaceWatch()
         }
     }
 
@@ -299,7 +308,45 @@ final class AppModel {
         }
     }
 
+    /// Scans are too heavy to run every minute, and free space can fall tens of gigabytes between them. Reading it is cheap.
+    private func startSpaceWatch() {
+        guard !CommandLine.arguments.contains("--snapshot") else { return }
+        spaceTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.checkSpace() }
+        }
+        spaceTimer?.tolerance = 15
+    }
+
+    private func readSpace() async -> DiskSpace? {
+        guard let path = preferences.roots.first?.path else { return nil }
+        return await Task.detached(priority: .utility) { DiskSpace.read(path: path) }.value
+    }
+
+    /// Cleans first when free space falls under the level, then alerts only if that did not resolve it.
+    private func checkSpace() async {
+        guard !checkingSpace, !ticking, !busy, !scanning, hasScanned, var space = await readSpace() else { return }
+        checkingSpace = true
+        defer { checkingSpace = false }
+        if LowSpace.isLow(space, preferences), !wasLow {
+            wasLow = true
+            await tick()
+            guard let fresh = await readSpace() else { return }
+            space = fresh
+        }
+        wasLow = LowSpace.isLow(space, preferences)
+        guard lowSpaceAlerts.shouldNotify(space, preferences: preferences, now: Date()) else { return }
+        let body = Self.lowSpaceMessage(free: space.available, cleanable: reclaimable + recentBytes)
+        notificationsDenied = await !LowSpaceNotifier.shared.post(title: "Disk space is low", body: body)
+    }
+
+    nonisolated static func lowSpaceMessage(free: Int64, cleanable: Int64) -> String {
+        let start = "\(Format.bytes(free)) free."
+        return cleanable > 0 ? "\(start) \(Format.bytes(cleanable)) of build output can be cleaned." : "\(start) Headroom has no build output ready to clean."
+    }
+
     private func tick() async {
+        ticking = true
+        defer { ticking = false }
         Updates.shared.installIfIdle()
         guard !busy, !scanning, !preferences.roots.isEmpty else { return }
         await scan()
@@ -642,6 +689,8 @@ final class AppModel {
     func setKeepHours(_ hours: Double) { preferences.keepHours = hours; Task { await persist(); await scan() } }
     func setInterval(_ hours: Double) { preferences.intervalHours = hours; Task { await persist() } }
     func togglePaused() { preferences.paused.toggle(); Task { await persist(); restartTimer() } }
+    func setLowSpace(_ gigabytes: Double) { preferences.lowSpaceGB = gigabytes; Task { await persist() } }
+    func toggleCleansWhenLow() { preferences.cleansWhenLow.toggle(); Task { await persist() } }
 
     func togglePin(_ group: WorktreeGroup) {
         if preferences.pinned.contains(group.top) { preferences.pinned.remove(group.top) } else { preferences.pinned.insert(group.top) }

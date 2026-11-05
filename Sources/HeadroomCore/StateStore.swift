@@ -59,6 +59,9 @@ final class StateStore {
               preferences.intervalHours >= 1, preferences.intervalHours <= 720 else {
             throw HeadroomError.message("Choose inactivity of 1–8760 hours and a schedule of 1–720 hours.")
         }
+        guard preferences.lowSpaceGB >= 0, preferences.lowSpaceGB <= 100_000 else {
+            throw HeadroomError.message("Choose a low-space level of 0–100000 GB.")
+        }
         let data = try JSONEncoder().encode(preferences)
         try update("INSERT OR REPLACE INTO settings VALUES ('preferences',?)", [String(decoding: data, as: UTF8.self)])
     }

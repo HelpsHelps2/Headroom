@@ -42,7 +42,7 @@ Acceptance: a user can explain why each candidate is eligible or protected, sele
 
 Add folder-level automatic-cleanup opt-in, configurable schedule, configurable inactivity defaulting to 24 hours, background registration, pause, and service health. Use the same worker and policy pipeline as manual cleanup. Preserve a fresh-observation requirement for newly discovered or uncertain resources.
 
-Defer pressure triggers, recovery targets, process termination, and selective Cargo pruning. Present storage pressure visually without changing cleanup authorization.
+Defer pressure triggers and recovery targets (since added by [0011](decisions/0011-low-space-alerts-and-cleanup.md)), process termination, and selective Cargo pruning. Present storage pressure visually without changing cleanup authorization.
 
 Acceptance: enabled schedules run with the window closed while the user is logged in. Tests cover sleep/wake, clock changes, service restart, disabled background operation, missing volumes, revoked access, and duplicate clients. Missed intervals do not launch overlapping or stale deletion runs. Routine success remains quiet; actionable failures are visible.
 
