@@ -133,6 +133,7 @@ final class StateStore {
         try execute("DELETE FROM observation WHERE path IN (SELECT path FROM observation ORDER BY seen DESC LIMIT -1 OFFSET 100000)")
     }
     /// Claims a scheduled run when the interval has passed and something is `ready`. Without anything ready the claim waits.
+    func scheduleStarted() throws -> Bool { try scalar("SELECT value FROM settings WHERE id='lastSchedule'") != nil }
     func scheduleDue(now: Date, interval: TimeInterval, ready: Bool) throws -> Bool {
         let old = try scalar("SELECT value FROM settings WHERE id='lastSchedule'").flatMap(Double.init)
         if let old, now.timeIntervalSince1970 >= old, now.timeIntervalSince1970 - old < interval { return false }

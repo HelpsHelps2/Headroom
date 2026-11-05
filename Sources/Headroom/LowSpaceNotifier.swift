@@ -10,24 +10,37 @@ final class LowSpaceNotifier: NSObject, UNUserNotificationCenterDelegate, @unche
         if usable { UNUserNotificationCenter.current().delegate = self }
     }
 
-    /// Returns false when notifications are turned off for Headroom. Asks the first time one is needed.
+    /// Returns whether the notification was handed to macOS. Asks for permission the first time one is needed.
     func post(title: String, body: String) async -> Bool {
-        guard usable else { return true }
+        guard usable else { return false }
         let center = UNUserNotificationCenter.current()
         guard (try? await center.requestAuthorization(options: [.alert])) == true else { return false }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         // A fixed identifier replaces the previous alert instead of stacking them.
-        try? await center.add(UNNotificationRequest(identifier: "low-space", content: content, trigger: nil))
-        return true
+        do {
+            try await center.add(UNNotificationRequest(identifier: "low-space", content: content, trigger: nil))
+            return true
+        } catch { return false }
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner]
+    var denied: Bool {
+        get async {
+            guard usable else { return false }
+            return await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
+        }
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        await MainActor.run { AppModel.shared.windowRequests += 1 }
+    // The completion-handler forms on purpose: the async forms finish away from the main thread, which AppKit can reject.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        Task { @MainActor in AppModel.shared.windowRequests += 1 }
+        completionHandler()
     }
 }

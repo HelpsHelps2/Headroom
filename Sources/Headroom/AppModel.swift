@@ -140,7 +140,7 @@ final class AppModel {
     @ObservationIgnored private var lowSpaceAlerts = LowSpaceAlerts()
     @ObservationIgnored private var wasLow = false
     @ObservationIgnored private var checkingSpace = false
-    @ObservationIgnored private var ticking = false
+    @ObservationIgnored private var ticking = 0
     /// Counts requests to open the window from outside a view, such as clicking a notification.
     var windowRequests = 0
     var notificationsDenied = false
@@ -319,14 +319,19 @@ final class AppModel {
 
     private func readSpace() async -> DiskSpace? {
         guard let path = preferences.roots.first?.path else { return nil }
-        return await Task.detached(priority: .utility) { DiskSpace.read(path: path) }.value
+        let space = await Task.detached(priority: .utility) { DiskSpace.read(path: path) }.value
+        return space.capacity > 0 ? space : nil
     }
+
+    /// Unlike `busy`, false once a cleanup is done, even if its results are still on screen.
+    private var cleanupRunning: Bool { sweep?.finished == false || removal?.finished == false }
 
     /// Cleans first when free space falls under the level, then alerts only if that did not resolve it.
     private func checkSpace() async {
-        guard !checkingSpace, !ticking, !busy, !scanning, hasScanned, var space = await readSpace() else { return }
+        guard !checkingSpace, ticking == 0, !cleanupRunning, !scanning, hasScanned else { return }
         checkingSpace = true
         defer { checkingSpace = false }
+        guard var space = await readSpace() else { return }
         if LowSpace.isLow(space, preferences), !wasLow {
             wasLow = true
             await tick()
@@ -334,9 +339,11 @@ final class AppModel {
             space = fresh
         }
         wasLow = LowSpace.isLow(space, preferences)
-        guard lowSpaceAlerts.shouldNotify(space, preferences: preferences, now: Date()) else { return }
+        // Something may have started during the reads. Wait for it, since it may resolve the problem.
+        guard ticking == 0, !cleanupRunning, !scanning, lowSpaceAlerts.shouldNotify(space, preferences: preferences, now: Date()) else { return }
         let body = Self.lowSpaceMessage(free: space.available, cleanable: reclaimable + recentBytes)
-        notificationsDenied = await !LowSpaceNotifier.shared.post(title: "Disk space is low", body: body)
+        if await LowSpaceNotifier.shared.post(title: "Disk space is low", body: body) { lowSpaceAlerts.notified(space, now: Date()) }
+        notificationsDenied = await LowSpaceNotifier.shared.denied
     }
 
     nonisolated static func lowSpaceMessage(free: Int64, cleanable: Int64) -> String {
@@ -345,8 +352,8 @@ final class AppModel {
     }
 
     private func tick() async {
-        ticking = true
-        defer { ticking = false }
+        ticking += 1
+        defer { ticking -= 1 }
         Updates.shared.installIfIdle()
         guard !busy, !scanning, !preferences.roots.isEmpty else { return }
         await scan()
@@ -358,6 +365,7 @@ final class AppModel {
     }
 
     func windowOpened() {
+        if !demo { Task { notificationsDenied = await LowSpaceNotifier.shared.denied } }
         guard !demo, !scanning, Date().timeIntervalSince(inventory.scannedAt) > 120 else { return }
         Task { await scan() }
     }

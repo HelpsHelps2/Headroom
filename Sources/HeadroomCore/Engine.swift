@@ -93,8 +93,10 @@ public actor Engine {
             artifact.eligible && Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours) &&
                 preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic })
         }
+        let started = try store.scheduleStarted()
         guard try claimSchedule(interval: preferences.intervalHours * 3600, ready: !eligible.isEmpty) else {
-            return try cleanForLowSpace(eligible: eligible, preferences: preferences, now: now)
+            // The first check after turning it on only starts the interval, and low space does not change that.
+            return started ? try cleanForLowSpace(eligible: eligible, preferences: preferences, now: now) : []
         }
         return try execute(plan(paths: Set(eligible.map(\.path)), automatic: true))
     }
@@ -103,7 +105,8 @@ public actor Engine {
     private func cleanForLowSpace(eligible: [Artifact], preferences: Preferences, now: Date) throws -> [HistoryEntry] {
         let space = DiskSpace(capacity: inventory.capacity, available: inventory.available)
         guard preferences.cleansWhenLow, now >= lowSpaceRetry, LowSpace.isLow(space, preferences),
-              let diskPath = preferences.roots.first?.path, let disk = try? FileInspection.metadata(diskPath) else { return [] }
+              let diskPath = preferences.roots.first?.path,
+              let disk = try? FileInspection.metadata(URL(fileURLWithPath: diskPath).resolvingSymlinksInPath().path) else { return [] }
         // Free space is measured on one volume. Output on another would not help it.
         let sameVolume = eligible.filter { $0.identity.device == UInt64(disk.st_dev) }
         let chosen = LowSpace.selection(from: sameVolume, space: space, preferences: preferences)

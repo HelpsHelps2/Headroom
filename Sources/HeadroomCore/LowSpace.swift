@@ -46,7 +46,8 @@ public struct LowSpaceAlerts: Sendable {
             return false
         }
         if let last, now.timeIntervalSince(last.date) < Self.repeatAfter, space.available >= last.available / 2 { return false }
-        last = (now, space.available)
         return true
     }
+    /// Call once the alert was actually delivered, so one that couldn't be, such as with notifications off, is tried again.
+    public mutating func notified(_ space: DiskSpace, now: Date) { last = (now, space.available) }
 }

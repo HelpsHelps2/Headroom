@@ -338,6 +338,17 @@ final class LowSpaceTests: XCTestCase {
         XCTAssertTrue(cleaned.allSatisfy(\.automatic))
         XCTAssertFalse(FileManager.default.fileExists(atPath: f.target.path))
     }
+    func testFirstCheckAfterTurningOnDeletesNothingEvenWhenLow() async throws {
+        let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
+        try await engine.save(lowPreferences(f))
+        // The output has been watched for longer than the wait before the schedule's first check.
+        for _ in 0..<14 { clock.advance(300); _ = try await engine.scan() }
+        let first = try await engine.runScheduleIfDue()
+        XCTAssertTrue(first.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+        let later = try await run(engine, clock, minutes: 5)
+        XCTAssertEqual(later.filter { $0.outcome == "Cleaned" }.count, 1)
+    }
     func testLowSpaceNeedsTheOptIn() async throws {
         let f = try Fixture(), clock = Clock(), engine = try f.engine(clock: { clock.now() })
         var p = lowPreferences(f); p.cleansWhenLow = false
@@ -418,7 +429,10 @@ final class LowSpaceTests: XCTestCase {
         var alerts = LowSpaceAlerts(), p = Preferences(); p.lowSpaceGB = 50
         let start = Date(), gb: Int64 = 1_000_000_000
         func notify(_ free: Int64, after hours: Double = 0) -> Bool {
-            alerts.shouldNotify(.init(capacity: 1000 * gb, available: free * gb), preferences: p, now: start.addingTimeInterval(hours * 3600))
+            let space = DiskSpace(capacity: 1000 * gb, available: free * gb), now = start.addingTimeInterval(hours * 3600)
+            guard alerts.shouldNotify(space, preferences: p, now: now) else { return false }
+            alerts.notified(space, now: now)
+            return true
         }
         XCTAssertFalse(notify(60), "above the line")
         XCTAssertTrue(notify(40), "first time under")
@@ -430,6 +444,14 @@ final class LowSpaceTests: XCTestCase {
         XCTAssertFalse(notify(100, after: 30), "recovered")
         XCTAssertTrue(notify(40, after: 31), "a new episode")
         XCTAssertFalse(alerts.shouldNotify(.init(capacity: 0, available: 0), preferences: p, now: start.addingTimeInterval(32 * 3600)), "failed reading")
+    }
+    func testAnUndeliveredAlertIsTriedAgain() {
+        var alerts = LowSpaceAlerts(), p = Preferences(); p.lowSpaceGB = 50
+        let space = DiskSpace(capacity: 1_000_000_000_000, available: 40_000_000_000), now = Date()
+        XCTAssertTrue(alerts.shouldNotify(space, preferences: p, now: now))
+        XCTAssertTrue(alerts.shouldNotify(space, preferences: p, now: now.addingTimeInterval(60)), "not delivered yet")
+        alerts.notified(space, now: now.addingTimeInterval(60))
+        XCTAssertFalse(alerts.shouldNotify(space, preferences: p, now: now.addingTimeInterval(120)))
     }
     func testSettingsFromBeforeLowSpaceStillLoad() throws {
         let old = #"{"roots":[{"path":"/p","automatic":true}],"pinned":[],"keepHours":6,"scheduled":true,"intervalHours":6,"paused":false}"#
