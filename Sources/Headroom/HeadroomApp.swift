@@ -273,13 +273,15 @@ enum Snapshots {
                 ("4-review", 0.9, { model.tab = .disk; model.openReview(model.visible); if model.demo { model.toggleExcluded(model.review[2]) } }),
                 ("5-sweep", 3.2, { model.startSweep() }),
                 ("6-done", 0.8, { model.stopSweep() }),
+                ("6-refreshing", 0.8, { model.closeSweep(); model.scanning = true; model.scanProgress = (3, 12) }),
                 ("7-settings", 0.9, { model.sweep = nil; model.screen = .settings }),
             ]
-            for (name, wait, apply) in steps where model.demo || !["1-recent-only", "2-selected", "2-review-selected", "2-merged-review", "2-scanning", "5-sweep", "6-done"].contains(name) {
+            for (name, wait, apply) in steps where model.demo || !["1-recent-only", "2-selected", "2-review-selected", "2-merged-review", "2-scanning", "5-sweep", "6-done", "6-refreshing"].contains(name) {
                 apply()
                 try? await Task.sleep(for: .seconds(wait))
                 capture(to: "\(directory)/\(name)-\(appearance).png")
                 if name == "2-scanning" { model.scanning = false }
+                if name == "6-refreshing" { model.scanning = false; model.lastReclaimed = nil; model.scanProgress = (0, 0) }
             }
             model.screen = .main
         }

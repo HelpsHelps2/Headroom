@@ -26,12 +26,13 @@ struct DiskView: View {
                 Text(freeLine).font(.mono(12.5)).foregroundStyle(theme.muted).monospacedDigit()
             }
             .padding(.top, firstLaunch ? 16 : 24)
-            DiskRing(capacity: model.inventory.capacity, available: model.inventory.available, highlight: onlyRecent ? model.recentBytes : model.reclaimable, size: firstLaunch ? 212 : 250, active: model.scanning) {
-                Button(action: coreAction) { CoreDisc(size: firstLaunch ? 132 : 156) { core } }
+            DiskRing(capacity: model.inventory.capacity, available: model.inventory.available,
+                     highlight: model.refreshingAfterCleanup ? 0 : onlyRecent ? model.recentBytes : model.reclaimable,
+                     size: firstLaunch ? 212 : 250, active: model.scanning) {
+                Button(action: coreAction) { CoreDisc(size: firstLaunch ? 132 : 156, success: model.refreshingAfterCleanup) { core } }
                     .buttonStyle(PressStyle())
-                    .disabled(model.hasScanned && model.eligible.isEmpty && model.recent.isEmpty && !model.preferences.roots.isEmpty)
-                    .accessibilityLabel(model.preferences.roots.isEmpty ? (model.chosenSuggestions.isEmpty ? "Add folder" : "Watch \(model.chosenSuggestions.count) folders")
-                                        : onlyRecent ? "Clean \(Format.bytes(model.recentBytes)) now" : "Reclaim \(Format.bytes(model.reclaimable))")
+                    .disabled(model.refreshingAfterCleanup || (model.hasScanned && model.eligible.isEmpty && model.recent.isEmpty && !model.preferences.roots.isEmpty))
+                    .accessibilityLabel(coreLabel)
             }
             .help("Gray: other used space. Amber: reclaimable output. Empty track: free space. The outer ticks move only while scanning or cleaning.")
             .padding(.top, firstLaunch ? 8 : 14)
@@ -40,7 +41,7 @@ struct DiskView: View {
                 Spacer(minLength: 0)
             } else {
                 planRow.padding(.horizontal, 14).padding(.top, 22)
-                if !model.eligible.isEmpty && !model.recent.isEmpty { cleanEverything.padding(.horizontal, 14).padding(.top, 6) }
+                if !model.refreshingAfterCleanup && !model.eligible.isEmpty && !model.recent.isEmpty { cleanEverything.padding(.horizontal, 14).padding(.top, 6) }
                 scopeRow.padding(.horizontal, 14).padding(.top, 8)
                 Spacer(minLength: 0)
                 footer
@@ -51,6 +52,17 @@ struct DiskView: View {
     private var firstLaunch: Bool { model.preferences.roots.isEmpty }
     /// Nothing is stale, but recent builds could go now.
     private var onlyRecent: Bool { model.hasScanned && model.eligible.isEmpty && !model.recent.isEmpty }
+
+    private var coreLabel: String {
+        if model.preferences.roots.isEmpty { return model.chosenSuggestions.isEmpty ? "Add folder" : "Watch \(model.chosenSuggestions.count) folders" }
+        if model.refreshingAfterCleanup, let reclaimed = model.lastReclaimed { return "\(Format.bytes(reclaimed)) reclaimed. Checking what's left." }
+        return onlyRecent ? "Clean \(Format.bytes(model.recentBytes)) now" : "Reclaim \(Format.bytes(model.reclaimable))"
+    }
+
+    /// "3 of 12" once the scanner knows how many folders it has to look at.
+    private var scanCount: String? {
+        model.scanProgress.total > 0 ? "\(model.scanProgress.done) of \(model.scanProgress.total)" : nil
+    }
 
     private var cleanEverything: some View {
         Button { model.cleanNow() } label: {
@@ -70,10 +82,8 @@ struct DiskView: View {
             guard model.inventory.capacity > 0 else { return "Watches worktrees for stale builds" }
             return "\(Format.bytes(model.inventory.available)) free on \(model.inventory.volume.isEmpty ? "this disk" : model.inventory.volume)"
         }
-        if model.scanning {
-            if let reclaimed = model.lastReclaimed { return "\(Format.bytes(reclaimed)) reclaimed · refreshing…" }
-            return "Refreshing disk usage…"
-        }
+        // After a cleanup, free space was just measured, so show it while the ring says what was reclaimed.
+        if model.scanning && !model.refreshingAfterCleanup { return "Refreshing disk usage…" }
         guard model.hasScanned else { return "Looking through your worktrees" }
         let volume = model.inventory.volume.isEmpty ? "this disk" : model.inventory.volume
         return "\(Format.bytes(model.inventory.available)) free on \(volume)"
@@ -102,8 +112,14 @@ struct DiskView: View {
         } else if !model.hasScanned {
             VStack(spacing: 8) {
                 Spinner()
-                Text(model.scanProgress.total > 0 ? "\(model.scanProgress.done) of \(model.scanProgress.total)" : "finding folders")
+                Text(scanCount ?? "finding folders")
                     .font(.mono(11)).foregroundStyle(theme.muted).monospacedDigit()
+            }
+        } else if model.refreshingAfterCleanup, let reclaimed = model.lastReclaimed {
+            VStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill").font(.sans(20)).foregroundStyle(theme.success)
+                BigBytes(bytes: reclaimed)
+                Text("RECLAIMED").font(.mono(10, .semibold)).tracking(1.4).foregroundStyle(theme.success).padding(.top, 3)
             }
         } else {
             VStack(spacing: 4) {
@@ -120,6 +136,7 @@ struct DiskView: View {
         let (title, detail, link): (String, String, String?) = {
             if model.preferences.roots.isEmpty { return ("Nothing is deleted unreviewed", "Finds node_modules and Cargo target folders", nil) }
             if !model.hasScanned { return ("Inspecting build output", "Checking processes, locks, and Git state", nil) }
+            if model.refreshingAfterCleanup { return ("Checking what's left", scanCount.map { "Rescanning · \($0) folders" } ?? "Rescanning your worktrees", nil) }
             if onlyRecent {
                 let trees = model.groups.filter(\.waiting).count
                 return ("\(trees) \(trees == 1 ? "worktree" : "worktrees") built recently", "Skips the \(Format.hours(model.preferences.keepHours)) wait", "Clean now")
@@ -145,6 +162,8 @@ struct DiskView: View {
                     if let link {
                         HStack(spacing: 3) { Text(link); Image(systemName: "chevron.right").font(.sans(9, .bold)) }
                             .font(.sans(11.5, .semibold)).foregroundStyle(theme.accent)
+                    } else if model.refreshingAfterCleanup {
+                        Spinner(size: 14)
                     }
                 }
                 .lineLimit(1)
@@ -254,11 +273,12 @@ struct DiskView: View {
 
 struct Spinner: View {
     @Environment(\.theme) private var theme
+    var size: CGFloat = 18
     @State private var spinning = false
     var body: some View {
         Circle().trim(from: 0, to: 0.7)
             .stroke(theme.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-            .frame(width: 18, height: 18)
+            .frame(width: size, height: size)
             .rotationEffect(.degrees(spinning ? 360 : 0))
             .onAppear { withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { spinning = true } }
     }
