@@ -112,6 +112,7 @@ final class AppModel {
     @ObservationIgnored var selectionAnchor: String?
     var reviewFilter: ReviewFilter = .remove
     var sweep: SweepState?
+    /// What the cleanup just closed freed, shown in the ring until the rescan after it finishes.
     var lastReclaimed: Int64?
     @ObservationIgnored private var inventoryRevision = 0
     /// nil shows every repository.
@@ -225,6 +226,8 @@ final class AppModel {
         return spaceLevel.title
     }
     var calm: Bool { !preferences.roots.isEmpty && hasScanned && spaceLevel == .fine }
+    /// The rescan after a cleanup. What's left over isn't known yet, so the Disk screen shows the result instead of offering more.
+    var refreshingAfterCleanup: Bool { scanning && lastReclaimed != nil }
 
     // MARK: Engine
 
@@ -241,7 +244,7 @@ final class AppModel {
         guard let engine, !scanning, !busy, !preferences.roots.isEmpty else { return }
         scanning = true
         let revision = inventoryRevision
-        defer { scanning = false }
+        defer { scanning = false; lastReclaimed = nil }
         let progress: HeadroomCore.Scanner.Progress = { [weak self] done, total in
             Task { @MainActor in self?.scanProgress = (done, total) }
         }
@@ -460,7 +463,7 @@ final class AppModel {
 
     func closeWorktreeRemoval() {
         guard let completed = removal, completed.finished else { return }
-        lastReclaimed = completed.freed
+        lastReclaimed = completed.freed > 0 ? completed.freed : nil
         if demo {
             inventory.available = min(inventory.capacity, inventory.available + completed.freed)
         } else if let attributes = try? FileManager.default.attributesOfFileSystem(forPath: preferences.roots.first?.path ?? "/"),
@@ -647,7 +650,7 @@ final class AppModel {
 
     func closeSweep() {
         guard let completed = sweep, completed.finished else { return }
-        lastReclaimed = completed.freed
+        lastReclaimed = completed.freed > 0 ? completed.freed : nil
         // Refresh real free space without waiting for the full worktree scan.
         if demo {
             inventory.available = min(inventory.capacity, inventory.available + completed.freed)

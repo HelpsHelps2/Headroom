@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2
+
+- After a cleanup, the Disk screen shows what you reclaimed in the ring, with a check mark, while Headroom checks what's left. The rescan's progress shows under the ring instead of only on the small arrow at the top. Leftover output is offered again only once the rescan finishes, so it no longer looks like what you just cleaned can be reclaimed again.
+- A later rescan no longer repeats the last cleanup's "reclaimed" total.
+
 ## 0.5.1
 
 - The menu bar shows free space next to the ring, updated every 10 seconds, including while scanning or cleaning.

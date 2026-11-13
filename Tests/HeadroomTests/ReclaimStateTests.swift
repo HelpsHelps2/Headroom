@@ -26,6 +26,10 @@ final class ReclaimStateTests: XCTestCase {
         XCTAssertEqual(model.screen, .main)
         XCTAssertEqual(model.reclaimable, before - cleaned.bytes)
         XCTAssertEqual(model.inventory.available, available + cleaned.bytes)
+        XCTAssertEqual(model.lastReclaimed, cleaned.bytes)
+        model.scanning = true
+        XCTAssertTrue(model.refreshingAfterCleanup, "The rescan after cleanup shows the result, not what's left")
+        model.scanning = false
         model.record(cleaned) // A queued callback after dismissal must not change anything.
         XCTAssertNil(model.sweep)
         XCTAssertEqual(model.inventory.available, available + cleaned.bytes)
