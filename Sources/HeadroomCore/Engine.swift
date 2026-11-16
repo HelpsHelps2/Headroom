@@ -170,7 +170,7 @@ public actor Engine {
                 }
                 let repository = inspector.repository(top: reviewed.top, now: clock())
                 let fresh = inspector.inspect(top: reviewed.top, root: reviewed.root, repository: repository, preferences: preferences,
-                                              activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock(), remeasure: true)
+                                              activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock())
                 guard fresh.verdict != .kept else { throw HeadroomError.message(fresh.reason ?? "It no longer meets the rules.") }
                 guard (fresh.lastUsed ?? .distantPast) <= (reviewed.lastUsed ?? .distantPast) else { throw HeadroomError.message("Its files or checkout changed since review.") }
                 guard fresh.agentRevision == reviewed.agentRevision else { throw HeadroomError.message("Its agent context changed since review.") }

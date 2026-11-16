@@ -261,6 +261,35 @@ final class WorktreeTests: XCTestCase {
         let later = try await f.survey(try f.engine(later: 8))
         XCTAssertEqual(later[tree.path]?.verdict, .ready)
     }
+    func testUnrecognizedTargetHasComparableReviewAndRemovalTimestamps() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("maven")
+        let output = tree.appendingPathComponent("target/classes/Example.class")
+        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("generated".utf8).write(to: output)
+        let written = Date().addingTimeInterval(60)
+        try FileManager.default.setAttributes([.modificationDate: written], ofItemAtPath: output.path)
+        let engine = try f.engine()
+        let statuses = try await f.survey(engine)
+        let reviewed = try XCTUnwrap(statuses[tree.path])
+        XCTAssertEqual(try XCTUnwrap(reviewed.lastUsed).timeIntervalSince1970, written.timeIntervalSince1970, accuracy: 0.001)
+        let plan = try await engine.planWorktreeRemoval(tops: [tree.path])
+        let entries = try await engine.removeWorktrees(plan)
+        XCTAssertEqual(entries.first?.outcome, "Cleaned", entries.first?.detail ?? "")
+        XCTAssertFalse(f.exists(tree))
+    }
+    func testUnrecognizedTargetWrittenAfterReviewStillStopsRemoval() async throws {
+        let f = try RepositoryFixture(), tree = try f.worktree("maven")
+        let output = tree.appendingPathComponent("target/classes/Example.class")
+        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("generated".utf8).write(to: output)
+        let engine = try f.engine()
+        _ = try await f.survey(engine)
+        let plan = try await engine.planWorktreeRemoval(tops: [tree.path])
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: output.path)
+        let entries = try await engine.removeWorktrees(plan)
+        XCTAssertEqual(entries.first?.outcome, "Skipped")
+        XCTAssertTrue(f.exists(output))
+    }
     func testRemovingBuildOutputDoesNotRestartTheUnusedClock() throws {
         let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("headroom-clock-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
