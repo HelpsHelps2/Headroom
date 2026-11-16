@@ -47,6 +47,8 @@ public struct ActivitySnapshot: Sendable {
     }
     public var uses: [Use]
     public var failure: String?
+    /// Agent sessions protect overlapping directories, including ancestors; ordinary open files do not.
+    public var agents = AgentContext()
     public var paths: [String] { uses.map(\.path) }
     public init(paths: [String], failure: String? = nil) {
         self.uses = paths.map { Use(path: $0, pid: nil, command: nil) }; self.failure = failure
@@ -86,6 +88,7 @@ public struct ActivitySnapshot: Sendable {
     }
     func protection(for project: String, target: String) -> String? {
         if let failure { return failure }
+        if let reason = agents.protection(project) ?? agents.protection(target) { return reason }
         guard let use = uses.first(where: { Paths.contains(project, $0.path) || Paths.contains(target, $0.path) }) else { return nil }
         if let command = use.command, let pid = use.pid { return "In use by \(command) (pid \(pid))." }
         return "A process has a working directory or open file in this project."

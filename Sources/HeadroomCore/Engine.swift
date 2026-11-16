@@ -22,10 +22,20 @@ public actor Engine {
                 home: String = FileManager.default.homeDirectoryForCurrentUser.path,
                 activity: @escaping @Sendable () -> ActivitySnapshot = { ActivitySnapshot.capture() },
                 clock: @escaping @Sendable () -> Date = { Date() },
-                pullRequests: PullRequestCache = PullRequestCache()) throws {
+                pullRequests: PullRequestCache = PullRequestCache(),
+                agents: (@Sendable () -> AgentContext)? = nil) throws {
         self.directory = directory; self.store = try StateStore(directory: directory)
-        self.scanner = Scanner(home: home); self.activityProvider = activity; self.clock = clock
-        self.inspector = WorktreeInspector(pullRequests: pullRequests)
+        let contexts: @Sendable () -> AgentContext = agents ?? { AgentContextReader(home: home).capture() }
+        self.scanner = Scanner(home: home)
+        self.activityProvider = {
+            var snapshot = activity()
+            let context = contexts()
+            snapshot.agents = context
+            snapshot.failure = snapshot.failure ?? context.failures.first
+            return snapshot
+        }
+        self.clock = clock
+        self.inspector = WorktreeInspector(pullRequests: pullRequests, agents: contexts)
     }
     public func preferences() throws -> Preferences { try store.preferences() }
     public func save(_ preferences: Preferences) throws {
@@ -139,6 +149,7 @@ public actor Engine {
         try planWorktreeRemoval(reviewed: worktrees.filter { tops.contains($0.top) }, approvingIgnored: approvingIgnored)
     }
     /// Plans from the statuses a person actually saw, not the latest survey, which may have refreshed during the review.
+    /// `approvingIgnored` also records explicit selection of recent work or uncertain agent completion.
     public func planWorktreeRemoval(reviewed: [WorktreeStatus], approvingIgnored: Set<String> = []) throws -> WorktreeRemovalPlan {
         let candidates = reviewed.filter { $0.verdict == .ready || ($0.verdict == .needsLook && approvingIgnored.contains($0.top)) }
         guard !candidates.isEmpty else { throw HeadroomError.message("No selected worktree can be removed. Scan again and review the reasons.") }
@@ -159,13 +170,15 @@ public actor Engine {
                 }
                 let repository = inspector.repository(top: reviewed.top, now: clock())
                 let fresh = inspector.inspect(top: reviewed.top, root: reviewed.root, repository: repository, preferences: preferences,
-                                              activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock(), remeasure: true)
+                                              activity: activityProvider(), artifacts: inventory.artifacts, known: known, now: clock())
                 guard fresh.verdict != .kept else { throw HeadroomError.message(fresh.reason ?? "It no longer meets the rules.") }
+                guard (fresh.lastUsed ?? .distantPast) <= (reviewed.lastUsed ?? .distantPast) else { throw HeadroomError.message("Its files or checkout changed since review.") }
+                guard fresh.agentRevision == reviewed.agentRevision else { throw HeadroomError.message("Its agent context changed since review.") }
                 guard fresh.head == reviewed.head else { throw HeadroomError.message("Its commit changed since review.") }
                 // Everything unrestorable that goes must have been on the review screen.
                 guard Set(fresh.envFiles).isSubset(of: reviewed.envFiles), Set(fresh.otherIgnored).isSubset(of: reviewed.otherIgnored),
                       fresh.verdict == .ready || plan.approvedIgnored.contains(reviewed.top) else {
-                    throw HeadroomError.message("It has new ignored files since review.")
+                    throw HeadroomError.message("Its review requirements changed. Review the worktree again.")
                 }
                 if let repository { try inspector.preserveCommit(top: fresh.top, head: fresh.head, repository: repository) }
                 let restore = WorktreeRestore(top: fresh.top, common: fresh.common, branch: fresh.branch, head: fresh.head)

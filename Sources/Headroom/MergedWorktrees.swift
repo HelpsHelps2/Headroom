@@ -26,6 +26,8 @@ extension WorktreeStatus {
     /// Evidence and age, such as `PR #812 merged · unused 9d`.
     var summary: String {
         var parts = [evidence ?? "merged"]
+        if let agentSummary { parts.append(agentSummary) }
+        if let reviewReason { parts.append(reviewReason) }
         if let lastUsed { parts.append("unused " + Format.age(lastUsed)) }
         return parts.joined(separator: " · ")
     }
@@ -46,7 +48,7 @@ struct MergedWorktreesList: View {
         let chosen = model.chosenWorktrees
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Text(model.surveying ? "Checking Git and GitHub…" : "Merged work, unused for \(WorktreePolicy.unusedDays)+ days.")
+                Text(model.surveying ? "Checking Git and GitHub…" : "Merged work, ready for your review.")
                     .font(.sans(11)).foregroundStyle(theme.muted).lineLimit(1)
                 Spacer(minLength: 4)
                 Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { model.screen = .worktreeRules } } label: {
@@ -76,7 +78,7 @@ struct MergedWorktreesList: View {
                             ForEach(ready) { row($0) }
                         }
                         if !look.isEmpty {
-                            header("Has other files", look.count, note: "Unchecked so you can look first.")
+                            header("Review before removing", look.count, note: "Unchecked so you can look first.")
                             ForEach(look) { row($0) }
                         }
                         if !kept.isEmpty {
@@ -121,7 +123,7 @@ struct MergedWorktreesList: View {
                     .foregroundStyle(chosen ? theme.accent : theme.dim)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(status.name).font(.mono(12, .medium)).foregroundStyle(theme.ink).lineLimit(1).truncationMode(.middle)
-                    Text(status.summary).font(.sans(11)).foregroundStyle(theme.muted).lineLimit(1)
+                    Text(status.summary).font(.sans(11)).foregroundStyle(theme.muted).lineLimit(3)
                     if !status.otherIgnored.isEmpty {
                         Text("has " + status.listing(status.otherIgnored)).font(.sans(11)).foregroundStyle(theme.accent).lineLimit(1).truncationMode(.middle)
                     }
@@ -207,8 +209,8 @@ struct WorktreeRulesView: View {
                             rule("Its commits are merged", "In the default branch, main, or staging, or part of a pull request merged into one of them. A matching branch name doesn't count.",
                                  count(.onlyOnThisMac, .openPullRequest, .commitsAfterMerge, .notMerged, .mergeUnknown))
                             rule("Nothing uncommitted", "No changed or untracked files.", count(.uncommitted))
-                            rule("Unused for \(WorktreePolicy.unusedDays) days", "No file changes, commits, or checkouts.", count(.recentlyUsed))
-                            rule("Nothing has it open", "No terminal, editor, or running process.", count(.inUse))
+                            rule("Recent work is your choice", "No mandatory wait. Recent work starts unchecked unless all known sessions explicitly finished after its last use.", 0)
+                            rule("Nothing has it open", "No terminal, editor, running process, or active agent session.", count(.inUse))
                             rule("Not protected", "Not the main checkout, not marked Always Keep, and not locked in Git.", count(.mainCheckout, .pinned, .locked))
                             rule("Nothing else inside", "No other worktree or repository in its folders.", count(.nestedWorktree))
                             rule("Headroom could check all of this", "If a check fails, the worktree stays.", count(.inspectionFailed))
@@ -225,6 +227,8 @@ struct WorktreeRulesView: View {
                         }
                         .padding(.vertical, 3)
                     }
+                    Text("T3, Codex, and Claude Code metadata adds context when available. No coding tool is required. Unknown completion starts unchecked; unreadable metadata keeps cleanup blocked. No conversations are read.")
+                        .font(.sans(11)).foregroundStyle(theme.dim).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
                     Text("To read merged pull requests, Headroom uses your GitHub CLI (`gh`) if you have it. Without it, or offline, only branches are checked and the rest stay.")
                         .font(.sans(11)).foregroundStyle(theme.dim).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
                 }
@@ -291,7 +295,7 @@ struct WorktreeReviewView: View {
                                 Spacer(minLength: 6)
                                 Text(Format.bytes(status.bytes)).font(.mono(11)).monospacedDigit().foregroundStyle(theme.muted)
                             }
-                            Text(status.summary).font(.sans(10.5)).foregroundStyle(theme.muted).lineLimit(1)
+                            Text(status.summary).font(.sans(10.5)).foregroundStyle(theme.muted).lineLimit(3)
                             if !status.envFiles.isEmpty {
                                 Text("also deletes " + status.listing(status.envFiles)).font(.sans(10.5)).foregroundStyle(theme.accent).lineLimit(1).truncationMode(.middle)
                             }

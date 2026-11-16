@@ -68,7 +68,7 @@ enum Demo {
         func status(_ repo: String, _ folder: String, _ branch: String?, _ verdict: WorktreeVerdict, rule: WorktreeRule? = nil, reason: String? = nil, evidence: String? = nil,
                     env: [String] = [], other: [String] = [], gb: Double = 0, days: Double = 0) -> WorktreeStatus {
             .init(top: trees + "/" + repo + "/" + folder, root: trees, repository: repo, common: code + "/" + repo + "/.git", branch: branch, head: "demo", verdict: verdict,
-                  rule: rule, reason: reason, evidence: evidence, envFiles: env, otherIgnored: other, bytes: Int64(gb * 1e9), lastUsed: now.addingTimeInterval(-days * 86400))
+                  rule: rule, reason: reason, evidence: evidence, envFiles: env, otherIgnored: other, bytes: Int64(gb * 1e9), lastUsed: now.addingTimeInterval(-days * 86400), reviewReason: verdict == .needsLook ? reason : nil)
         }
         model.worktrees = [
             status("atlas", "fitment-cache", "fitment-cache", .ready, evidence: "PR #812 merged", env: [".env"], gb: 46.8, days: 12),
@@ -76,7 +76,7 @@ enum Demo {
             status("ledger", "visits-sync", "visits-sync", .ready, evidence: "Part of PR #604", gb: 16.4, days: 8),
             status("t3code", "t3-77c1d09a", nil, .ready, evidence: "In staging", gb: 0.3, days: 15),
             status("headroom", "ui-pass", "ui-pass", .needsLook, evidence: "PR #41 merged", other: ["test-shots/", "notes.md"], gb: 13.5, days: 11),
-            status("ledger", "export-csv", "export-csv", .kept, rule: .recentlyUsed, reason: "Merged, can go in 3 days", evidence: "PR #611 merged", gb: 2.6, days: 4),
+            status("ledger", "export-csv", "export-csv", .needsLook, reason: "Recently used; select if you’re finished", evidence: "PR #611 merged", gb: 2.6, days: 4),
             status("t3code", "fix-sse-reconnect", "fix/sse-reconnect", .kept, rule: .uncommitted, reason: "2 uncommitted changes", gb: 5.4),
             status("orbit", "t3-20dd7483", "schedule-settled", .kept, rule: .uncommitted, reason: "12 uncommitted changes", gb: 62.4),
             status("t3code", "spike-sqlite-wal", "spike/sqlite-wal", .kept, rule: .onlyOnThisMac, reason: "3 commits only on this Mac", gb: 10.2),

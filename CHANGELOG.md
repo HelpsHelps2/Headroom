@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- Review merged, clean, inactive worktrees immediately, without a mandatory seven-day wait. Recent work starts unchecked unless every known agent owner explicitly finished after its last use.
+- Optional T3, Codex, and Claude Code metadata adds completion context and live-session protection. T3 child tasks and shared owners are included; Claude response completion is never treated as project completion. No coding tool is required.
+- Recheck session ownership and file activity before removal; new owners, resumed sessions, and unreadable metadata keep work safe. Automatic build-output cleanup retains its configured inactivity wait.
+
 ## 0.5.2
 
 - After a cleanup, the Disk screen shows what you reclaimed in the ring, with a check mark, while Headroom checks what's left. The rescan's progress shows under the ring instead of only on the small arrow at the top. Leftover output is offered again only once the rescan finishes, so it no longer looks like what you just cleaned can be reclaimed again.

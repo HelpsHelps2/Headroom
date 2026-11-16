@@ -51,12 +51,21 @@ The **Merged** filter on the Worktrees tab offers a worktree only when every rul
 
 - **Merged:** its commit is in origin's default branch, `main`, `master`, or `staging`, or is part of a pull request merged into one of them. A matching branch name doesn't count. Pull requests are read with your own GitHub CLI (`gh`) when you have it; without it, or offline, only branches are checked and the rest stay.
 - **Nothing uncommitted:** no changed or untracked files, including ones a repository's settings hide from `git status`.
-- **Unused for 7 days:** no file changes, commits, or checkouts. Removing its build output doesn't restart this wait.
-- **Nothing has it open:** no terminal, editor, or running process.
+- **No mandatory age limit:** recently used worktrees can be selected immediately. They start unchecked unless all known agent sessions explicitly finished after the latest file change, commit, or checkout. Without agent context, seven days of inactivity is only a recommendation threshold.
+- **Nothing has it open:** no terminal, editor, running process, or known active agent session.
 - **Not protected:** not the main checkout, not marked Always Keep, and not locked in Git.
 - **Nothing else inside:** no other worktree, repository, or submodule anywhere in its folders, including ignored ones like build output.
 
 If any check can't finish, the worktree stays.
+
+Optional local integrations add context; no agent app is required:
+
+- **T3 Code:** reads settlement/archive metadata and run state, including child tasks and all threads sharing a worktree. Older database layouts provide context without claiming completion.
+- **Codex:** reads thread working directories and explicit archive timestamps from its local state database. An unarchived thread is not assumed finished. Live process checks still apply to archived threads.
+- **Claude Code:** reads local session registration files and checks their processes. Idle but live sessions protect their worktrees; stale registration files do not establish completion. Claude has no completion signal used by this adapter.
+
+Headroom reads only metadata, not conversations or credentials, and never modifies agent databases. It supports standard local locations plus `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. Missing integrations are optional; unreadable or unsupported installed metadata keeps cleanup blocked until inspection succeeds. Unknown completion starts the worktree unchecked. Worktrees with other ignored files also remain unchecked. Agent context is read again before deletion. Automatic build-output cleanup retains its configured inactivity wait; agent completion never authorizes automatic whole-worktree removal.
+
 
 Removal runs `git worktree remove` without `--force`, after applying every rule again. The branch and commits stay, and History has a **Restore** button that recreates the worktree. If nothing else holds a commit, Headroom keeps it with a private `refs/headroom/restore/` ref. Ignored files can't be restored. `.env` and `.env.*` files don't block removal, but the review names them. Build output and test results don't block it either. Other ignored files, such as screenshots, leave the worktree unchecked until you choose it.
 
