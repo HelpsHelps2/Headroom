@@ -30,7 +30,7 @@ public actor Engine {
         self.activityProvider = {
             var snapshot = activity()
             let context = contexts()
-            snapshot.uses += context.sessions.filter { $0.state == .active }.map { .init(path: $0.path, pid: nil, command: $0.provider) }
+            snapshot.agents = context
             snapshot.failure = snapshot.failure ?? context.failures.first
             return snapshot
         }

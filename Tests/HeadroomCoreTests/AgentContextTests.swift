@@ -168,4 +168,40 @@ final class AgentContextTests: XCTestCase {
         XCTAssertNotEqual(AgentContext(sessions: [a]).revision("/tree"), AgentContext(sessions: [a,b]).revision("/tree"))
     }
 
+    func testAncestorAgentProtectsOutputDuringScan() async throws {
+        let f = try Fixture()
+        let context = AgentContext(sessions: [.init(path: f.project.deletingLastPathComponent().path, provider: "T3", state: .active)])
+        let engine = try Engine(directory: f.state, home: f.home.path, activity: { .init(paths: []) }, agents: { context })
+        try await engine.save(f.preferences())
+        let inventory = try await engine.scan()
+        let artifact = try XCTUnwrap(inventory.artifacts.first)
+        XCTAssertFalse(artifact.eligible)
+        XCTAssertTrue(artifact.reasons.contains("Active T3 session"))
+    }
+    func testAncestorAgentStartingAfterReviewBlocksManualAndAutomaticOutputRemoval() async throws {
+        for automatic in [false, true] {
+            let f = try Fixture(), context = Locked(AgentContext()), clock = Clock()
+            let engine = try Engine(directory: f.state, home: f.home.path, activity: { .init(paths: []) },
+                                    clock: { clock.now() }, agents: { context.with { $0 } })
+            var preferences = f.preferences()
+            preferences.scheduled = true; preferences.roots[0].automatic = true; preferences.keepHours = 1
+            try await engine.save(preferences)
+            _ = try await engine.scan()
+            for _ in 0..<7 { clock.advance(600); _ = try await engine.scan() }
+            let plan = try await engine.plan(paths: [f.target.path], automatic: automatic)
+            context.with { $0 = .init(sessions: [.init(path: f.project.deletingLastPathComponent().path, provider: "T3", state: .active)]) }
+            let entries = try await engine.execute(plan)
+            XCTAssertEqual(entries.first?.outcome, "Skipped", "automatic: \(automatic)")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+        }
+    }
+
+    func testAgentOverlapDoesNotBroadenOrdinaryProcessProtection() {
+        var snapshot = ActivitySnapshot(paths: ["/projects"])
+        XCTAssertNil(snapshot.protection(for: "/projects/repo", target: "/projects/repo/target"))
+        snapshot.agents = .init(sessions: [.init(path: "/projects", provider: "T3", state: .active)])
+        XCTAssertEqual(snapshot.protection(for: "/projects/repo", target: "/projects/repo/target"), "Active T3 session")
+        XCTAssertNil(snapshot.protection(for: "/projects-other/repo", target: "/projects-other/repo/target"))
+    }
+
 }
