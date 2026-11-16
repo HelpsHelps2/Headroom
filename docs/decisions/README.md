@@ -15,3 +15,5 @@ The following decisions were accepted through the architecture interview on Octo
 - [0011 Low-space alerts and cleanup](0011-low-space-alerts-and-cleanup.md)
 
 Change accepted decisions through a new record explaining the reason, consequences, and migration. Preserve superseded records so contributors can understand earlier constraints.
+
+- [0012 Reviewed worktree eligibility and optional agent context](0012-agent-aware-worktree-review.md)

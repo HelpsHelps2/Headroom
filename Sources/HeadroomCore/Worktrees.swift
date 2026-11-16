@@ -9,7 +9,7 @@ public enum WorktreeRule: String, Codable, CaseIterable, Sendable {
 public enum WorktreeVerdict: String, Codable, Sendable {
     /// Meets every rule. Offered for removal and checked by default.
     case ready
-    /// Meets every rule but holds ignored files Headroom doesn't recognize. Offered, unchecked, so a person looks first.
+    /// Safe to review, but recent use, uncertain completion, or ignored files require explicit selection.
     case needsLook
     case kept
 }
@@ -28,6 +28,9 @@ public struct WorktreeStatus: Codable, Identifiable, Equatable, Sendable {
     public var reason: String?
     /// What shows the work is merged, such as "PR #812 merged".
     public var evidence: String?
+    public var agentRevision: String?
+    public var agentSummary: String?
+    public var reviewReason: String?
     /// Ignored `.env` files that go with the worktree. They don't block removal, but the review names them.
     public var envFiles: [String]
     /// Ignored files that aren't build output or `.env` files.
@@ -38,10 +41,11 @@ public struct WorktreeStatus: Codable, Identifiable, Equatable, Sendable {
     public var removable: Bool { verdict != .kept }
     public init(top: String, root: String, repository: String, common: String, branch: String?, head: String, verdict: WorktreeVerdict,
                 rule: WorktreeRule? = nil, reason: String? = nil, evidence: String? = nil, envFiles: [String] = [], otherIgnored: [String] = [],
-                bytes: Int64 = 0, lastUsed: Date? = nil) {
+                bytes: Int64 = 0, lastUsed: Date? = nil, agentSummary: String? = nil, reviewReason: String? = nil) {
         self.top = top; self.root = root; self.repository = repository; self.common = common; self.branch = branch; self.head = head
         self.verdict = verdict; self.rule = rule; self.reason = reason; self.evidence = evidence; self.envFiles = envFiles
         self.otherIgnored = otherIgnored; self.bytes = bytes; self.lastUsed = lastUsed
+        self.agentSummary = agentSummary; self.reviewReason = reviewReason
     }
 }
 
@@ -58,7 +62,7 @@ public struct WorktreeRestore: Codable, Equatable, Sendable {
 
 public struct WorktreeRemovalPlan: Sendable {
     public let candidates: [WorktreeStatus]
-    /// Worktrees whose unrecognized ignored files a person chose to remove.
+    /// Worktrees explicitly selected despite review requirements (recent use, uncertain completion, or ignored files).
     public let approvedIgnored: Set<String>
 }
 
@@ -74,6 +78,7 @@ public struct PullRequest: Codable, Equatable, Sendable {
 }
 
 public enum WorktreePolicy {
+    /// Recommendation threshold only; recent work can be selected for review immediately.
     public static let unusedDays = 7
     /// Branches that count as shared when they exist on origin, alongside origin's default branch.
     static let sharedBranches = ["main", "master", "staging"]
@@ -162,10 +167,14 @@ struct RepositoryFacts: Sendable {
 
 public struct WorktreeInspector: Sendable {
     let pullRequests: PullRequestCache
-    public init(pullRequests: PullRequestCache = PullRequestCache()) { self.pullRequests = pullRequests }
+    let agents: @Sendable () -> AgentContext
+    public init(pullRequests: PullRequestCache = PullRequestCache(), agents: @escaping @Sendable () -> AgentContext = { AgentContextReader().capture() }) {
+        self.pullRequests = pullRequests; self.agents = agents
+    }
 
     /// Inspects every known worktree. Read-only: Git runs without optional locks and nothing is written.
     public func survey(roots: [String: String], preferences: Preferences, activity: ActivitySnapshot, artifacts: [Artifact], now: Date) -> [WorktreeStatus] {
+        let context = agents()
         var byCommon: [String: [String]] = [:]
         for top in roots.keys { byCommon[Scanner.gitDirectories(top: top)?.common ?? top, default: []].append(top) }
         let commons = Array(byCommon)
@@ -182,7 +191,7 @@ public struct WorktreeInspector: Sendable {
                 let top = tops[index], root = roots[top] ?? ""
                 let repository = repositories[Scanner.gitDirectories(top: top)?.common ?? top]
                 let status = inspect(top: top, root: root, repository: repository, preferences: preferences, activity: activity,
-                                     artifacts: artifacts, known: known, now: now)
+                                     artifacts: artifacts, known: known, now: now, context: context)
                 results.with { $0.append(status) }
             }
         }
@@ -219,7 +228,7 @@ public struct WorktreeInspector: Sendable {
     /// Applies the rules to one worktree. Unknown or failed checks always keep it.
     /// `remeasure` walks build output too instead of trusting the last scan, so a build that finished since then counts as use.
     func inspect(top: String, root: String, repository: RepositoryFacts?, preferences: Preferences, activity: ActivitySnapshot,
-                 artifacts: [Artifact], known: [String], now: Date, remeasure: Bool = false) -> WorktreeStatus {
+                 artifacts: [Artifact], known: [String], now: Date, remeasure: Bool = false, context: AgentContext? = nil) -> WorktreeStatus {
         let own = artifacts.filter { $0.worktree?.top == top || ($0.worktree == nil && Paths.contains(top, $0.path)) }
         let builds = own.reduce(0) { $0 + $1.bytes }
         var status = WorktreeStatus(top: top, root: root, repository: repository?.name ?? URL(fileURLWithPath: top).lastPathComponent,
@@ -242,6 +251,12 @@ public struct WorktreeInspector: Sendable {
         if repository.locked.contains(top) { return keep(.locked, "Locked in Git") }
         if let reason = activity.protection(for: top, target: top) {
             return keep(.inUse, reason.hasSuffix(".") ? String(reason.dropLast()) : reason)
+        }
+        let context = context ?? agents()
+        status.agentSummary = context.summary(top)
+        status.agentRevision = context.revision(top)
+        if let reason = context.protection(top) {
+            return keep(context.failures.isEmpty ? .inUse : .inspectionFailed, reason)
         }
         // The scan's list can be older than this check, so Git's current list counts too.
         if (known + repository.registered).contains(where: { $0 != top && Paths.contains(top, $0) }) { return keep(.nestedWorktree, "Contains another worktree") }
@@ -289,10 +304,12 @@ public struct WorktreeInspector: Sendable {
         }
         let lastUsed = used.max() ?? .distantPast
         status.lastUsed = lastUsed
-        let wait = Double(WorktreePolicy.unusedDays) * 86400 - now.timeIntervalSince(lastUsed)
-        if wait > 0 {
-            let days = max(Int(ceil(wait / 86400)), 1)
-            return keep(.recentlyUsed, "Merged, can go in \(days) \(days == 1 ? "day" : "days")")
+        let recent = now.timeIntervalSince(lastUsed) < Double(WorktreePolicy.unusedDays) * 86400
+        if recent && !context.completion(top, since: lastUsed) {
+            status.reviewReason = "Recently used; select if you're finished"
+        }
+        if context.matching(top).contains(where: { $0.state == .unknown }) {
+            status.reviewReason = "Agent completion unconfirmed; select if you're finished"
         }
         // A repository anywhere inside is real work that `git worktree remove` would delete without complaint, and Git's
         // status can't be relied on to show it. This walks everything, so it runs only for worktrees that passed the rest.
@@ -301,7 +318,7 @@ public struct WorktreeInspector: Sendable {
         case false?: break
         case nil: return keep(.inspectionFailed, "Couldn't check its folders")
         }
-        status.verdict = other.isEmpty ? .ready : .needsLook
+        status.verdict = other.isEmpty && status.reviewReason == nil ? .ready : .needsLook
         return status
     }
 

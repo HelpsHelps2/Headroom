@@ -252,11 +252,12 @@ final class WorktreeTests: XCTestCase {
         let status = try await f.survey(try f.engine(activity: .init(paths: [], failure: "Permission denied")))
         XCTAssertEqual(status[tree.path]?.rule, .inUse)
     }
-    func testRecentlyUsedWaitsSevenDaysFromLastFileChange() async throws {
+    func testRecentlyUsedIsReviewableWithoutWaiting() async throws {
         let f = try RepositoryFixture(), tree = try f.worktree("recent")
         let soon = try await f.survey(try f.engine(later: 2))
-        XCTAssertEqual(soon[tree.path]?.rule, .recentlyUsed)
-        XCTAssertEqual(soon[tree.path]?.reason, "Merged, can go in 5 days")
+        XCTAssertEqual(soon[tree.path]?.verdict, .needsLook)
+        XCTAssertNil(soon[tree.path]?.rule)
+        XCTAssertNotNil(soon[tree.path]?.reviewReason)
         let later = try await f.survey(try f.engine(later: 8))
         XCTAssertEqual(later[tree.path]?.verdict, .ready)
     }
