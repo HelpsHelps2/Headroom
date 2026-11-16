@@ -187,7 +187,8 @@ final class AgentContextTests: XCTestCase {
             preferences.scheduled = true; preferences.roots[0].automatic = true; preferences.keepHours = 1
             try await engine.save(preferences)
             _ = try await engine.scan()
-            for _ in 0..<7 { clock.advance(600); _ = try await engine.scan() }
+            // Stay below the observation-gap boundary; SQLite date round-trips can shift it by a fraction.
+            for _ in 0..<14 { clock.advance(300); _ = try await engine.scan() }
             let plan = try await engine.plan(paths: [f.target.path], automatic: automatic)
             context.with { $0 = .init(sessions: [.init(path: f.project.deletingLastPathComponent().path, provider: "T3", state: .active)]) }
             let entries = try await engine.execute(plan)
