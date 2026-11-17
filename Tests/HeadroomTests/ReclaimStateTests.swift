@@ -4,6 +4,35 @@ import HeadroomCore
 
 final class ReclaimStateTests: XCTestCase {
     @MainActor
+    func testDiskStatusDistinguishesAutomaticWaitFromProtection() throws {
+        let model = AppModel(demo: true)
+        let now = model.inventory.scannedAt
+        let template = try XCTUnwrap(model.eligible.first)
+        let automaticRoot = WatchedRoot(path: template.root, automatic: true)
+        let manualRoot = WatchedRoot(path: "/manual")
+        model.preferences.roots = [automaticRoot, manualRoot]
+        model.preferences.keepHours = 1
+        func output(_ name: String, gb: Int64, firstObserved: Date, root: WatchedRoot = automaticRoot, reasons: [String] = []) -> Artifact {
+            .init(project: root.path, path: root.path + "/" + name, root: root.path, bytes: gb * 1_000_000_000, files: 1,
+                  latestWrite: template.latestWrite, identity: template.identity, reasons: reasons, firstObserved: firstObserved)
+        }
+        model.inventory.artifacts = [
+            output("ready", gb: 5, firstObserved: now.addingTimeInterval(-3600)),
+            output("waiting", gb: 2, firstObserved: now),
+            output("recent", gb: 3, firstObserved: now, reasons: [Artifact.recentReason + "hour."]),
+            output("active", gb: 8, firstObserved: now, reasons: ["In use by cargo (pid 100).", Artifact.recentReason + "hour."]),
+            output("manual", gb: 1, firstObserved: now, root: manualRoot),
+        ]
+        XCTAssertEqual(model.reclaimable, 8_000_000_000)
+        XCTAssertEqual(model.automaticOutput.ready, 5_000_000_000)
+        XCTAssertEqual(model.automaticOutput.waiting, 5_000_000_000)
+        XCTAssertEqual(model.protectedOutput.map(\.bytes), [8_000_000_000])
+        model.preferences.paused = true
+        XCTAssertEqual(model.automaticOutput.ready, 0)
+        XCTAssertEqual(model.automaticOutput.waiting, 0)
+    }
+
+    @MainActor
     func testCleanedOutputDisappearsBeforeRescanAndDuplicateCallbacksAreHarmless() {
         let model = AppModel(demo: true)
         let candidates = Array(model.eligible.prefix(2))

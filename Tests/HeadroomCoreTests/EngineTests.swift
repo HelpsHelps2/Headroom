@@ -22,6 +22,14 @@ final class Fixture {
         try age()
     }
     deinit { try? FileManager.default.removeItem(at: base) }
+    func useCargoCacheTag() throws {
+        let fingerprint = target.appendingPathComponent("debug/.fingerprint/example-123")
+        try FileManager.default.createDirectory(at: fingerprint, withIntermediateDirectories: true)
+        try Data().write(to: fingerprint.appendingPathComponent("invoked.timestamp"))
+        try Data("Signature: 8a477f597d28d172789f06886806bc55\n".utf8).write(to: target.appendingPathComponent("CACHEDIR.TAG"))
+        try FileManager.default.removeItem(at: target.appendingPathComponent(".rustc_info.json"))
+        try age()
+    }
     func age() throws {
         let old = Date().addingTimeInterval(-86400 * 10)
         if let enumerator = FileManager.default.enumerator(at: target, includingPropertiesForKeys: nil) {
@@ -61,6 +69,60 @@ final class EngineTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: f.project.appendingPathComponent("Cargo.toml").path))
         XCTAssertEqual(try String(contentsOf: cache, encoding: .utf8), "keep")
     }
+    func testDiscoveryCacheFindsNewOutputAndStopsReportingRemovedOutput() throws {
+        let f = try Fixture(), scanner = Scanner(home: f.home.path), cache = DiscoveryCache()
+        let preferences = f.preferences(), activity = ActivitySnapshot(paths: [])
+        XCTAssertEqual(try Command.git(f.project.path, ["add", "Cargo.toml"]).status, 0)
+        let stamp = try XCTUnwrap(Scanner.indexStamp(top: f.project.path))
+        let saved = f.base.appendingPathComponent("saved-target")
+        try FileManager.default.moveItem(at: f.target, to: saved)
+        XCTAssertTrue(scanner.scan(preferences: preferences, activity: activity, discovery: cache).artifacts.isEmpty)
+        try FileManager.default.moveItem(at: saved, to: f.target)
+        XCTAssertEqual(scanner.scan(preferences: preferences, activity: activity, discovery: cache).artifacts.map(\.path), [f.target.path])
+        try FileManager.default.moveItem(at: f.target, to: saved)
+        XCTAssertTrue(scanner.scan(preferences: preferences, activity: activity, discovery: cache).artifacts.isEmpty)
+        XCTAssertEqual(Scanner.indexStamp(top: f.project.path), stamp)
+    }
+    func testTaggedCargoOutputWithoutCompilerInfoCanBeCleaned() async throws {
+        let f = try Fixture()
+        let engine = try Engine(directory: f.state, home: f.home.path)
+        try f.useCargoCacheTag()
+        try await engine.save(f.preferences())
+        _ = try await engine.scan()
+        let plan = try await engine.plan(paths: [f.target.path])
+        let result = try await engine.execute(plan)
+        XCTAssertEqual(result.first?.outcome, "Cleaned", result.first?.detail ?? "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.target.path))
+    }
+    func testCargoTagNeedsValidSignatureAndGeneratedFiles() throws {
+        let f = try Fixture(), scanner = Scanner(home: f.home.path)
+        try f.useCargoCacheTag()
+        try FileManager.default.removeItem(at: f.target.appendingPathComponent("debug/.fingerprint/example-123"))
+        try f.age()
+        let empty = scanner.scan(preferences: f.preferences(), activity: .init(paths: []))
+        XCTAssertTrue(try XCTUnwrap(empty.artifacts.first).reasons.contains("No Cargo fingerprints and dependency output were found."))
+        let other = try Fixture()
+        try other.useCargoCacheTag()
+        try Data("unrelated tag".utf8).write(to: other.target.appendingPathComponent("CACHEDIR.TAG"))
+        try other.age()
+        let invalid = scanner.scan(preferences: other.preferences(), activity: .init(paths: []))
+        XCTAssertFalse(try XCTUnwrap(invalid.artifacts.first).eligible)
+    }
+    func testProcessThatOpensOutputDuringVerificationStopsCleanup() async throws {
+        let f = try Fixture(), snapshots = Locked(0), path = f.project.path
+        try f.useCargoCacheTag()
+        let engine = try Engine(directory: f.state, home: f.home.path, activity: {
+            let sample = snapshots.with { $0 += 1; return $0 }
+            return ActivitySnapshot(paths: sample >= 3 ? [path] : [])
+        })
+        try await engine.save(f.preferences())
+        _ = try await engine.scan()
+        let plan = try await engine.plan(paths: [f.target.path])
+        let result = try await engine.execute(plan)
+        XCTAssertEqual(result.first?.outcome, "Skipped")
+        XCTAssertTrue(result.first?.detail.contains("A process has") ?? false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
+    }
     func testProcessUsingProjectProtectsIt() async throws {
         let f = try Fixture(), engine = try f.engine(activity: .init(paths: []))
         try await engine.save(f.preferences())
@@ -80,6 +142,7 @@ final class EngineTests: XCTestCase {
     }
     func testHeldCargoLockProtectedButLeftoverFileIsNot() throws {
         let f = try Fixture()
+        try f.useCargoCacheTag()
         let fd = open(f.target.appendingPathComponent("debug/.cargo-lock").path, O_RDWR)
         defer { close(fd) }
         XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
@@ -88,6 +151,20 @@ final class EngineTests: XCTestCase {
         flock(fd, LOCK_UN)
         let idle = Scanner(home: f.home.path).scan(preferences: f.preferences(), activity: .init(paths: []))
         XCTAssertTrue(try XCTUnwrap(idle.artifacts.first).eligible)
+    }
+    func testCargoLockAcquiredAfterReviewStopsCleanup() async throws {
+        let f = try Fixture(), engine = try f.engine()
+        try f.useCargoCacheTag()
+        try await engine.save(f.preferences())
+        _ = try await engine.scan()
+        let plan = try await engine.plan(paths: [f.target.path])
+        let fd = open(f.target.appendingPathComponent("debug/.cargo-lock").path, O_RDWR)
+        defer { close(fd) }
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        let result = try await engine.execute(plan)
+        XCTAssertEqual(result.first?.outcome, "Skipped")
+        XCTAssertTrue(result.first?.detail.contains("Cargo holds a build lock.") ?? false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.target.path))
     }
     func testTrackedOutputProtected() throws {
         let f = try Fixture()
@@ -114,6 +191,7 @@ final class EngineTests: XCTestCase {
     }
     func testUnexpectedContentProtected() throws {
         let f = try Fixture()
+        try f.useCargoCacheTag()
         try Data("notes".utf8).write(to: f.target.appendingPathComponent("notes.md"))
         try f.age()
         let result = Scanner(home: f.home.path).scan(preferences: f.preferences(), activity: .init(paths: []))

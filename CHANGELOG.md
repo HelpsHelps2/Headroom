@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- Scans find newly created Cargo `target` and `node_modules` folders even when the Git index and branch are unchanged.
+- Cargo output can qualify when `.rustc_info.json` is absent if it has a valid cache tag, build fingerprints, and dependency output. Headroom rechecks live activity immediately before cleanup and holds Cargo's build locks through removal.
+- The Disk view shows which output is ready for automatic cleanup, which is still waiting, and why Headroom is protecting other folders.
+
 ## 0.6.0
 
 - Review merged, clean, inactive worktrees immediately, without a mandatory seven-day wait. Recent work starts unchecked unless every known agent owner explicitly finished after its last use.

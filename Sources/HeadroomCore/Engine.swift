@@ -44,8 +44,6 @@ public actor Engine {
         try store.save(preferences)
     }
     public func history() throws -> [HistoryEntry] { try store.history() }
-    /// Observation times round-trip through SQLite and Date's 2001 epoch, which can shift them by a fraction of a microsecond.
-    static func idle(since: Date, now: Date, hours: Double) -> Bool { now.timeIntervalSince(since) >= hours * 3600 - 0.001 }
     public func space(since: Date) throws -> [SpaceSample] { try store.space(since: since) }
     /// Records a sleep the calling process lived through. Only a process that stayed running can vouch that it watched.
     public func recordSleep(_ interval: DateInterval) {
@@ -84,11 +82,9 @@ public actor Engine {
         guard now.timeIntervalSince(inventory.scannedAt) < 300 else { throw HeadroomError.message("Scan again before preparing cleanup.") }
         let skipping = automatic ? [] : skippingWait.intersection(paths)
         let candidates = inventory.artifacts.filter { artifact in
-            guard paths.contains(artifact.path), artifact.eligible(skippingWait: skipping.contains(artifact.path)) else { return false }
-            if !automatic { return true }
-            return preferences.scheduled && !preferences.paused &&
-                preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic }) &&
-                Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours)
+            guard paths.contains(artifact.path) else { return false }
+            if automatic { return artifact.eligibleForAutomaticCleanup(in: preferences, now: now) }
+            return artifact.eligible(skippingWait: skipping.contains(artifact.path))
         }
         guard !candidates.isEmpty else { throw HeadroomError.message("No selected output is eligible. Protected items stay in place.") }
         return .init(id: UUID(), createdAt: now, candidates: candidates, preferences: preferences, automatic: automatic,
@@ -99,10 +95,7 @@ public actor Engine {
     public func runScheduleIfDue() throws -> [HistoryEntry] {
         let preferences = try store.preferences(), now = clock()
         guard preferences.scheduled, !preferences.paused else { return [] }
-        let eligible = inventory.artifacts.filter { artifact in
-            artifact.eligible && Self.idle(since: artifact.firstObserved, now: now, hours: preferences.keepHours) &&
-                preferences.roots.contains(where: { $0.path == artifact.root && $0.automatic })
-        }
+        let eligible = inventory.artifacts.filter { $0.eligibleForAutomaticCleanup(in: preferences, now: now) }
         let started = try store.scheduleStarted()
         guard try claimSchedule(interval: preferences.intervalHours * 3600, ready: !eligible.isEmpty) else {
             // The first check after turning it on only starts the interval, and low space does not change that.
@@ -250,6 +243,12 @@ public actor Engine {
                 guard fresh.eligible(skippingWait: plan.skippingWait.contains(fresh.path)) else { throw HeadroomError.message(fresh.reasons.joined(separator: " ")) }
                 guard fresh.identity == artifact.identity, fresh.latestWrite == artifact.latestWrite,
                       fresh.files == artifact.files, fresh.bytes == artifact.bytes else { throw HeadroomError.message("Output changed since review. Scan again.") }
+                // Inspecting a large tree can take time. Check for processes that opened it during verification.
+                let live = activityProvider()
+                if let reason = live.protection(for: fresh.worktree?.top ?? fresh.project, target: fresh.path) {
+                    throw HeadroomError.message(reason)
+                }
+                // Take the Cargo locks after observing processes so our own descriptors don't appear as users.
                 let locks = fresh.kind == .cargo ? try CargoLocks(target: fresh.path) : nil
                 defer { withExtendedLifetime(locks) {} }
                 entry.outcome = "Cleaning"; entry.detail = "Permanent removal of verified \(fresh.kind.directory) output."
