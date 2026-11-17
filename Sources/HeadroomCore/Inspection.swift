@@ -112,6 +112,10 @@ enum FileInspection {
     }
     static func identity(_ value: stat) -> FileIdentity { .init(device: UInt64(value.st_dev), inode: UInt64(value.st_ino)) }
     static func isDirectory(_ value: stat) -> Bool { value.st_mode & S_IFMT == S_IFDIR }
+    static func isRegularFile(_ path: String) -> Bool {
+        guard let value = try? metadata(path) else { return false }
+        return value.st_mode & S_IFMT == S_IFREG
+    }
     static func date(_ value: stat) -> Date { Date(timeIntervalSince1970: Double(value.st_mtimespec.tv_sec) + Double(value.st_mtimespec.tv_nsec) / 1e9) }
     /// Allocated bytes of files that only this tree references. Hard-linked files (package stores) are not counted:
     /// deleting this copy does not free them. Links are counted as entries but never followed.
@@ -207,11 +211,16 @@ final class CargoLocks {
         do {
             for profile in ["debug", "release"] {
                 let path = target + "/" + profile + "/.cargo-lock"
-                if FileManager.default.fileExists(atPath: path) {
-                    let fd = open(path, O_RDWR | O_NOFOLLOW)
-                    guard fd >= 0 else { throw HeadroomError.message("Cannot inspect Cargo's build lock.") }
-                    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { close(fd); throw HeadroomError.message("Cargo holds a build lock.") }
-                    descriptors.append(fd)
+                let fd = open(path, O_RDWR | O_NOFOLLOW | O_NONBLOCK)
+                if fd < 0, errno == ENOENT { continue }
+                guard fd >= 0 else { throw HeadroomError.message("Cannot inspect Cargo's build lock.") }
+                descriptors.append(fd)
+                var metadata = stat()
+                guard fstat(fd, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG else {
+                    throw HeadroomError.message("Cargo's build lock is not a regular file.")
+                }
+                guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+                    throw HeadroomError.message(errno == EWOULDBLOCK ? "Cargo holds a build lock." : "Cannot inspect Cargo's build lock.")
                 }
             }
         } catch { for fd in descriptors { close(fd) }; descriptors = []; throw error }

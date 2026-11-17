@@ -4,6 +4,7 @@ import HeadroomCore
 struct DiskView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
+    @State private var showingProtection = false
 
     var body: some View {
         @Bindable var model = model
@@ -28,8 +29,8 @@ struct DiskView: View {
             .padding(.top, firstLaunch ? 16 : 24)
             DiskRing(capacity: model.inventory.capacity, available: model.inventory.available,
                      highlight: model.refreshingAfterCleanup ? 0 : onlyRecent ? model.recentBytes : model.reclaimable,
-                     size: firstLaunch ? 212 : 250, active: model.scanning) {
-                Button(action: coreAction) { CoreDisc(size: firstLaunch ? 132 : 156, success: model.refreshingAfterCleanup) { core } }
+                     size: firstLaunch ? 212 : 234, active: model.scanning) {
+                Button(action: coreAction) { CoreDisc(size: firstLaunch ? 132 : 148, success: model.refreshingAfterCleanup) { core } }
                     .buttonStyle(PressStyle())
                     .disabled(model.refreshingAfterCleanup || (model.hasScanned && model.eligible.isEmpty && model.recent.isEmpty && !model.preferences.roots.isEmpty))
                     .accessibilityLabel(coreLabel)
@@ -40,8 +41,11 @@ struct DiskView: View {
                 suggestionList.padding(.horizontal, 14).padding(.top, 12)
                 Spacer(minLength: 0)
             } else {
-                planRow.padding(.horizontal, 14).padding(.top, 22)
+                planRow.padding(.horizontal, 14).padding(.top, 14)
                 if !model.refreshingAfterCleanup && !model.eligible.isEmpty && !model.recent.isEmpty { cleanEverything.padding(.horizontal, 14).padding(.top, 6) }
+                if model.hasScanned && !model.refreshingAfterCleanup {
+                    cleanupStatus.padding(.horizontal, 16).padding(.top, 7)
+                }
                 scopeRow.padding(.horizontal, 14).padding(.top, 8)
                 Spacer(minLength: 0)
                 footer
@@ -142,21 +146,20 @@ struct DiskView: View {
                 return ("\(trees) \(trees == 1 ? "worktree" : "worktrees") built recently", "Skips the \(Format.hours(model.preferences.keepHours)) wait", "Clean now")
             }
             if model.eligible.isEmpty {
-                return ("Nothing idle long enough", "\(model.kept.count) folders kept · cleans after \(Format.hours(model.preferences.keepHours)) unused", model.kept.isEmpty ? nil : "Why")
+                return ("No output ready to reclaim", "", nil)
             }
             let folders = model.eligible.count == 1 ? "1 folder" : "\(model.eligible.count) folders"
-            return ("\(folders) · \(repos) \(repos == 1 ? "repo" : "repos")", "\(model.kept.count) kept active · caches untouched", "Review")
+            return ("\(folders) ready to reclaim", "\(repos) \(repos == 1 ? "repo" : "repos")", "Review")
         }()
         return Button {
             if !model.eligible.isEmpty { model.openReview(model.visible) }
             else if onlyRecent { model.cleanNow() }
-            else if !model.kept.isEmpty { model.worktreeFilter = .kept; model.tab = .worktrees }
         } label: {
             Card {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title).font(.mono(12, .medium)).foregroundStyle(theme.ink)
-                        Text(detail).font(.sans(11.5)).foregroundStyle(theme.muted)
+                        if !detail.isEmpty { Text(detail).font(.sans(11.5)).foregroundStyle(theme.muted) }
                     }
                     Spacer(minLength: 0)
                     if let link {
@@ -171,6 +174,64 @@ struct DiskView: View {
         }
         .buttonStyle(PressStyle())
         .disabled(link == nil)
+    }
+
+    @ViewBuilder private var cleanupStatus: some View {
+        let automatic = model.automaticOutput
+        let protected = model.protectedOutput.sorted { $0.bytes > $1.bytes }
+        let issues = model.inventory.issues
+        VStack(alignment: .leading, spacing: 4) {
+            if automatic.ready > 0 || automatic.waiting > 0 {
+                Text("Auto · \(Format.bytes(automatic.ready)) ready · \(Format.bytes(automatic.waiting)) waiting")
+                    .help("Waiting output needs \(Format.hours(model.preferences.keepHours)) of idle observation. Ready output can go on the next automatic run.")
+            }
+            if !protected.isEmpty || !issues.isEmpty {
+                Button { showingProtection = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "lock")
+                        if let largest = protected.first {
+                            let total = protected.reduce(Int64(0)) { $0 + $1.bytes }
+                            let reason = Reason.primary(largest.reasons.filter { !$0.hasPrefix(Artifact.recentReason) }).map(Reason.short)
+                            let size = total > 0 ? Format.bytes(total) : protected.count == 1 ? "1 folder" : "\(protected.count) folders"
+                            Text("\(size) protected" + (reason.map { " · " + $0 } ?? ""))
+                                .lineLimit(1)
+                        } else {
+                            Text(issues.count == 1 ? "1 scan issue" : "\(issues.count) scan issues")
+                        }
+                        Spacer(minLength: 3)
+                        Image(systemName: "chevron.right").font(.sans(9, .semibold))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PressStyle())
+                .accessibilityHint("Shows which folders Headroom kept and why")
+                .popover(isPresented: $showingProtection, arrowEdge: .bottom) {
+                    protectionDetails(protected, issues: issues)
+                }
+            }
+        }
+        .font(.sans(11.5))
+        .foregroundStyle(theme.muted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func protectionDetails(_ artifacts: [Artifact], issues: [String]) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                ForEach(artifacts) { artifact in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(Format.home(artifact.path)).font(.mono(11, .medium))
+                        Text(artifact.reasons.joined(separator: " ")).font(.sans(11.5)).foregroundStyle(theme.muted)
+                    }
+                    .textSelection(.enabled)
+                }
+                ForEach(issues, id: \.self) { issue in
+                    Text(issue).font(.sans(11.5)).foregroundStyle(theme.muted).textSelection(.enabled)
+                }
+            }
+            .padding(12)
+        }
+        .frame(width: 312, height: 230)
     }
 
     /// First launch: folders found on this Mac, pre-checked, so the first press starts watching them.

@@ -170,13 +170,28 @@ final class AppModel {
     // MARK: Derived state
 
     /// Folders under 1 MB are not worth a line (for example a `node_modules` holding only a Vite cache).
-    var visible: [Artifact] { inventory.artifacts.filter { $0.bytes >= 1_000_000 } }
+    private static let minimumOutputBytes: Int64 = 1_000_000
+    var visible: [Artifact] { inventory.artifacts.filter { $0.bytes >= Self.minimumOutputBytes } }
     var eligible: [Artifact] { visible.filter(\.eligible) }
     var kept: [Artifact] { visible.filter { !$0.eligible } }
     var reclaimable: Int64 { eligible.reduce(0) { $0 + $1.bytes } }
     /// Output kept only by the keep window, which Clean Now removes too.
     var recent: [Artifact] { visible.filter(\.waiting) }
     var recentBytes: Int64 { recent.reduce(0) { $0 + $1.bytes } }
+    var protectedOutput: [Artifact] {
+        inventory.artifacts.filter {
+            !$0.eligible(skippingWait: true) && ($0.bytes >= Self.minimumOutputBytes || $0.identity.inode == 0)
+        }
+    }
+    /// The last scan establishes how long output has been observed idle.
+    var automaticOutput: (ready: Int64, waiting: Int64) {
+        var ready: Int64 = 0, waiting: Int64 = 0
+        for artifact in visible where artifact.eligible(skippingWait: true) && preferences.allowsAutomaticCleanup(in: artifact.root) {
+            if artifact.eligibleForAutomaticCleanup(in: preferences, now: inventory.scannedAt) { ready += artifact.bytes }
+            else { waiting += artifact.bytes }
+        }
+        return (ready, waiting)
+    }
     var currentSpace: DiskSpace? { liveSpace ?? (inventory.capacity > 0 ? .init(capacity: inventory.capacity, available: inventory.available) : nil) }
     var spaceLevel: SpaceLevel { currentSpace.map { LowSpace.level($0, preferences) } ?? .fine }
     var groups: [WorktreeGroup] {

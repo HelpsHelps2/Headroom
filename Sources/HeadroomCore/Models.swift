@@ -37,6 +37,9 @@ public struct Preferences: Codable, Equatable, Sendable {
     }
     /// Automatic cleanup is on, but no watched folder allows it, so it can never remove anything.
     public var automaticHasNoFolders: Bool { scheduled && !roots.isEmpty && !roots.contains(where: \.automatic) }
+    public func allowsAutomaticCleanup(in root: String) -> Bool {
+        scheduled && !paused && roots.contains { $0.path == root && $0.automatic }
+    }
     public func isPinned(_ project: String) -> Bool { pinned.contains { Paths.contains($0, project) } }
 }
 
@@ -88,6 +91,12 @@ public struct Artifact: Codable, Identifiable, Equatable, Sendable {
     /// Kept only because it was written within the keep window. A person can choose to remove it now; nothing else can.
     public var waiting: Bool { !reasons.isEmpty && reasons.allSatisfy { $0.hasPrefix(Self.recentReason) } }
     public func eligible(skippingWait: Bool) -> Bool { eligible || (skippingWait && waiting) }
+    /// The interval and disk-pressure rules decide when to start a run with these candidates.
+    public func eligibleForAutomaticCleanup(in preferences: Preferences, now: Date) -> Bool {
+        // SQLite's round trip through Unix time can shift dates by a fraction of a microsecond.
+        eligible && preferences.allowsAutomaticCleanup(in: root) &&
+            now.timeIntervalSince(firstObserved) >= preferences.keepHours * 3600 - 0.001
+    }
     public var name: String { URL(fileURLWithPath: project).lastPathComponent }
     /// Output path relative to its worktree, e.g. `packages/web/node_modules`.
     public var relativePath: String {

@@ -17,7 +17,6 @@ public struct Scanner: Sendable {
     /// walking its source tree. Candidates are inspected concurrently.
     public func scan(preferences: Preferences, activity: ActivitySnapshot, now: Date = Date(), progress: Progress? = nil,
                      discovery: DiscoveryCache = DiscoveryCache()) -> Inventory {
-        let fm = FileManager.default
         var issues: [String] = []
         var candidates: [Candidate] = []
         var worktrees: [String: String] = [:] // worktree top → scan root
@@ -86,7 +85,12 @@ public struct Scanner: Sendable {
         }
         issues += problems.with { $0 }
         var seen: Set<String> = []
-        candidates = (candidates + found.with { $0 }).filter { seen.insert($0.project + "/" + $0.kind.directory).inserted }
+        candidates = (candidates + found.with { $0 }).filter { candidate in
+            // Builds and installs create output without updating either the index or HEAD.
+            guard seen.insert(candidate.output).inserted,
+                  let metadata = try? FileInspection.metadata(candidate.output) else { return false }
+            return FileInspection.isDirectory(metadata)
+        }
 
         let cache = WorktreeCache(), done = Locked(0), next = Locked(0)
         let results = Locked<[Artifact]>([])
@@ -134,9 +138,14 @@ public struct Scanner: Sendable {
         }
         return stamps.joined(separator: "|")
     }
-    struct Candidate: Sendable { var kind: ArtifactKind; var project: String; var root: String }
+    struct Candidate: Sendable {
+        var kind: ArtifactKind
+        var project: String
+        var root: String
+        var output: String { project + "/" + kind.directory }
+    }
 
-    /// Tracked and untracked-but-not-ignored manifests in a worktree, with an output folder beside them.
+    /// Tracked and untracked-but-not-ignored manifests in a worktree.
     private func manifests(in top: String, root: String) throws -> [Candidate] {
         let pathspecs = ArtifactKind.allCases.map { ":(glob)**/" + $0.manifest }
         let list = try Command.git(top, ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"] + pathspecs)
@@ -145,10 +154,7 @@ public struct Scanner: Sendable {
         for file in Set(list.output.split(separator: "\0").map(String.init)) where !file.contains("node_modules/") {
             let url = URL(fileURLWithPath: top + "/" + file)
             guard let kind = ArtifactKind.allCases.first(where: { $0.manifest == url.lastPathComponent }) else { continue }
-            let project = url.deletingLastPathComponent().standardizedFileURL.path
-            if let metadata = try? FileInspection.metadata(project + "/" + kind.directory), FileInspection.isDirectory(metadata) {
-                result.append(.init(kind: kind, project: project, root: root))
-            }
+            result.append(.init(kind: kind, project: url.deletingLastPathComponent().standardizedFileURL.path, root: root))
         }
         return result
     }
@@ -159,6 +165,9 @@ public struct Scanner: Sendable {
         var measurement = TreeMeasurement(identity: .init(device: 0, inode: 0))
         do { measurement = try FileInspection.measure(target, allowLinks: kind.removesLinks) }
         catch { reasons.append(error.localizedDescription) }
+        if !FileInspection.isRegularFile(project + "/" + kind.manifest) {
+            reasons.append("The project manifest is missing or is not a regular file.")
+        }
         if preferences.isPinned(project) { reasons.append("Pinned by you.") }
         if let reason = activity.protection(for: project, target: target) { reasons.append(reason) }
         if measurement.latestWrite > now.addingTimeInterval(-preferences.keepHours * 3600) { reasons.append(Artifact.recentReason + (preferences.keepHours == 1 ? "hour." : "\(Int(preferences.keepHours)) hours.")) }
@@ -224,14 +233,26 @@ public struct Scanner: Sendable {
             let allowed: Set<String> = ["debug", "release", "tmp", "rust-analyzer", ".rustc_info.json", ".future-incompat-report.json", "CACHEDIR.TAG", ".DS_Store"]
             let unexpected = names.subtracting(allowed).sorted()
             if !unexpected.isEmpty { reasons.append("Unexpected items in target: \(unexpected.prefix(4).joined(separator: ", ")).") }
-            let marker = try String(contentsOfFile: target + "/.rustc_info.json", encoding: .utf8)
-            guard let data = marker.data(using: .utf8), (try JSONSerialization.jsonObject(with: data)) is [String: Any] else {
-                throw HeadroomError.message("Missing valid Cargo build evidence.")
+            let hasCompilerInfo = names.contains(".rustc_info.json")
+            if hasCompilerInfo {
+                guard FileInspection.isRegularFile(target + "/.rustc_info.json"),
+                      let data = try String(contentsOfFile: target + "/.rustc_info.json", encoding: .utf8).data(using: .utf8),
+                      (try JSONSerialization.jsonObject(with: data)) is [String: Any] else {
+                    throw HeadroomError.message("Invalid Cargo compiler information.")
+                }
+            } else {
+                guard names.contains("CACHEDIR.TAG"), try hasCacheTag(target + "/CACHEDIR.TAG") else {
+                    throw HeadroomError.message("Missing valid Cargo compiler information or cache directory tag.")
+                }
             }
             var fingerprint = false
             for profile in ["debug", "release"] where names.contains(profile) {
-                let profileNames = Set(try fm.contentsOfDirectory(atPath: target + "/" + profile))
-                if profileNames.contains(".fingerprint"), profileNames.contains("deps") { fingerprint = true }
+                let directory = target + "/" + profile
+                let profileNames = Set(try fm.contentsOfDirectory(atPath: directory))
+                if profileNames.contains(".fingerprint"), profileNames.contains("deps"),
+                   try (hasCompilerInfo || hasGeneratedCargoFiles(in: directory)) {
+                    fingerprint = true
+                }
                 let directories: Set<String> = [".fingerprint", "deps", "build", "incremental", "examples", ".cargo-lock", ".DS_Store"]
                 for name in profileNames where !directories.contains(name) {
                     let path = target + "/" + profile + "/" + name
@@ -245,6 +266,28 @@ public struct Scanner: Sendable {
             if !fingerprint { reasons.append("No Cargo fingerprints and dependency output were found.") }
         } catch { reasons.append("Cargo output evidence is incomplete: \(error.localizedDescription)") }
         return reasons
+    }
+
+    private func hasCacheTag(_ path: String) throws -> Bool {
+        guard FileInspection.isRegularFile(path) else { return false }
+        let signature = Data("Signature: 8a477f597d28d172789f06886806bc55\n".utf8)
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+        defer { try? handle.close() }
+        return try handle.read(upToCount: signature.count) == signature
+    }
+
+    /// Compiler information is optional. A cache tag alone doesn't identify Cargo as the owner.
+    private func hasGeneratedCargoFiles(in profile: String) throws -> Bool {
+        let fingerprints = profile + "/.fingerprint"
+        let dependencies = profile + "/deps"
+        let entries = try FileInspection.listing(fingerprints)
+        guard entries.contains(where: { $0.directory && FileInspection.isRegularFile(fingerprints + "/" + $0.name + "/invoked.timestamp") }) else {
+            return false
+        }
+        return try FileInspection.listing(dependencies).contains { entry in
+            (entry.name.hasSuffix(".d") || entry.name.hasSuffix(".rlib") || entry.name.hasSuffix(".rmeta"))
+                && FileInspection.isRegularFile(dependencies + "/" + entry.name)
+        }
     }
 
     /// Positive evidence that this is a package manager's install tree rather than a hand-made folder.
