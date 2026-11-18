@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Headroom uses less CPU during background scans by reading file metadata in batches. The disk status stays still between scans, and scan animations pause when the window is inactive.
+
 ## 0.6.1
 
 - Scans find newly created Cargo `target` and `node_modules` folders even when the Git index and branch are unchanged.

@@ -115,8 +115,8 @@ struct DiskView: View {
             }
         } else if !model.hasScanned {
             VStack(spacing: 8) {
-                Spinner()
-                Text(scanCount ?? "finding folders")
+                if model.scanning { Spinner() }
+                Text(model.scanning ? scanCount ?? "finding folders" : "Waiting to scan")
                     .font(.mono(11)).foregroundStyle(theme.muted).monospacedDigit()
             }
         } else if model.refreshingAfterCleanup, let reclaimed = model.lastReclaimed {
@@ -334,13 +334,17 @@ struct DiskView: View {
 
 struct Spinner: View {
     @Environment(\.theme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var size: CGFloat = 18
-    @State private var spinning = false
     var body: some View {
-        Circle().trim(from: 0, to: 0.7)
-            .stroke(theme.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-            .frame(width: size, height: size)
-            .rotationEffect(.degrees(spinning ? 360 : 0))
-            .onAppear { withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { spinning = true } }
+        let animate = scenePhase == .active && !reduceMotion
+        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !animate)) { context in
+            let rotation = animate ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360 : 0
+            Circle().trim(from: 0, to: 0.7)
+                .stroke(theme.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(rotation))
+        }
     }
 }
