@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.2
 
 - Headroom uses less CPU during background scans by reading file metadata in batches. The disk status stays still between scans, and scan animations pause when the window is inactive.
 
