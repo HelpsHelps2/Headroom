@@ -101,7 +101,8 @@ public struct Scanner: Sendable {
                 let index = next.with { value -> Int in defer { value += 1 }; return value }
                 guard index < candidates.count else { return }
                 let candidate = candidates[index]
-                if let artifact = try? inspect(kind: candidate.kind, project: candidate.project, root: candidate.root, preferences: preferences, activity: activity, now: now, cache: cache) {
+                if let artifact = try? inspect(kind: candidate.kind, project: candidate.project, root: candidate.root,
+                                               preferences: preferences, activity: activity, now: now, cache: cache, batchAttributes: true) {
                     results.with { $0.append(artifact) }
                 }
                 let count = done.with { $0 += 1; return $0 }
@@ -159,11 +160,12 @@ public struct Scanner: Sendable {
         return result
     }
 
-    func inspect(kind: ArtifactKind = .cargo, project: String, root: String, preferences: Preferences, activity: ActivitySnapshot, now: Date, cache: WorktreeCache = WorktreeCache()) throws -> Artifact {
+    func inspect(kind: ArtifactKind = .cargo, project: String, root: String, preferences: Preferences, activity: ActivitySnapshot,
+                 now: Date, cache: WorktreeCache = WorktreeCache(), batchAttributes: Bool = false) throws -> Artifact {
         let target = project + "/" + kind.directory
         var reasons: [String] = []
         var measurement = TreeMeasurement(identity: .init(device: 0, inode: 0))
-        do { measurement = try FileInspection.measure(target, allowLinks: kind.removesLinks) }
+        do { measurement = try FileInspection.measure(target, allowLinks: kind.removesLinks, batchAttributes: batchAttributes) }
         catch { reasons.append(error.localizedDescription) }
         if !FileInspection.isRegularFile(project + "/" + kind.manifest) {
             reasons.append("The project manifest is missing or is not a regular file.")

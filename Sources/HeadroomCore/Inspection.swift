@@ -116,11 +116,15 @@ enum FileInspection {
         guard let value = try? metadata(path) else { return false }
         return value.st_mode & S_IFMT == S_IFREG
     }
-    static func date(_ value: stat) -> Date { Date(timeIntervalSince1970: Double(value.st_mtimespec.tv_sec) + Double(value.st_mtimespec.tv_nsec) / 1e9) }
+    static func date(_ value: stat) -> Date { date(value.st_mtimespec) }
+    private static func date(_ time: timespec) -> Date {
+        Date(timeIntervalSince1970: Double(time.tv_sec) + Double(time.tv_nsec) / 1e9)
+    }
     /// Allocated bytes of files that only this tree references. Hard-linked files (package stores) are not counted:
     /// deleting this copy does not free them. Links are counted as entries but never followed.
     /// Directories named in `skipping` are left out entirely, at any depth.
-    static func measure(_ path: String, allowLinks: Bool = false, skipping: Set<String> = []) throws -> TreeMeasurement {
+    static func measure(_ path: String, allowLinks: Bool = false, skipping: Set<String> = [],
+                        batchAttributes: Bool = false) throws -> TreeMeasurement {
         let root = try metadata(path)
         guard isDirectory(root) else { throw HeadroomError.message("Output is not a regular directory (links are protected).") }
         var result = TreeMeasurement(identity: identity(root))
@@ -130,29 +134,53 @@ enum FileInspection {
         defer { close(fd) }
         var opened = stat()
         guard fstat(fd, &opened) == 0, identity(opened) == result.identity else { throw HeadroomError.message("Output changed during inspection.") }
-        try walk(fd, device: root.st_dev, allowLinks: allowLinks, skipping: skipping, into: &result)
+        try walk(fd, device: root.st_dev, allowLinks: allowLinks, skipping: skipping, batchAttributes: batchAttributes, into: &result)
         return result
     }
-    private static func walk(_ fd: Int32, device: dev_t, allowLinks: Bool, skipping: Set<String>, into result: inout TreeMeasurement) throws {
-        for name in try entries(fd) {
+    private static func walk(_ fd: Int32, device: dev_t, allowLinks: Bool, skipping: Set<String>,
+                             batchAttributes: Bool, into result: inout TreeMeasurement) throws {
+        for entry in try measurementEntries(fd, batchAttributes: batchAttributes) {
+            let name = entry.name
+            if let file = entry.file {
+                guard file.device == device else { throw HeadroomError.message("Output crosses a filesystem boundary.") }
+                try record(date(file.modified), bytes: file.bytes, directory: false, into: &result)
+                continue
+            }
             var value = stat()
             guard fstatat(fd, name, &value, AT_SYMLINK_NOFOLLOW) == 0 else { throw HeadroomError.message("Cannot inspect \(name): \(String(cString: strerror(errno)))") }
-            if isDirectory(value), skipping.contains(name) { continue }
+            let directory = isDirectory(value)
+            if directory, skipping.contains(name) { continue }
             let link = value.st_mode & S_IFMT == S_IFLNK
             guard !link || allowLinks else { throw HeadroomError.message("Output contains a symbolic link; review it manually.") }
-            guard link || value.st_mode & S_IFMT == S_IFREG || isDirectory(value) else { throw HeadroomError.message("Output contains a special filesystem object.") }
+            guard link || value.st_mode & S_IFMT == S_IFREG || directory else { throw HeadroomError.message("Output contains a special filesystem object.") }
             guard value.st_dev == device else { throw HeadroomError.message("Output crosses a filesystem boundary.") }
-            result.latestWrite = max(result.latestWrite, date(value))
-            if !isDirectory(value) { result.latestFileWrite = max(result.latestFileWrite, date(value)) }
-            result.files += 1
-            guard result.files <= 2_000_000 else { throw HeadroomError.message("Output exceeds this build's inspection limit.") }
-            if isDirectory(value) {
+            let bytes = !directory && !link && value.st_nlink <= 1 ? Int64(value.st_blocks) * 512 : 0
+            try record(date(value), bytes: bytes, directory: directory, into: &result)
+            if directory {
                 let child = openat(fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
                 guard child >= 0 else { throw HeadroomError.message("Cannot open \(name): \(String(cString: strerror(errno)))") }
                 defer { close(child) }
-                try walk(child, device: device, allowLinks: allowLinks, skipping: skipping, into: &result)
-            } else if !link, value.st_nlink <= 1 { result.bytes += Int64(value.st_blocks) * 512 }
+                try walk(child, device: device, allowLinks: allowLinks, skipping: skipping, batchAttributes: batchAttributes, into: &result)
+            }
         }
+    }
+
+    private static func record(_ modified: Date, bytes: Int64, directory: Bool, into result: inout TreeMeasurement) throws {
+        result.latestWrite = max(result.latestWrite, modified)
+        if !directory { result.latestFileWrite = max(result.latestFileWrite, modified) }
+        result.files += 1
+        guard result.files <= 2_000_000 else { throw HeadroomError.message("Output exceeds this build's inspection limit.") }
+        result.bytes += bytes
+    }
+
+    private static func measurementEntries(_ fd: Int32, batchAttributes: Bool) throws -> [DirectoryAttributes.Entry] {
+        if !batchAttributes { return try entries(fd).map { .init(name: $0) } }
+        if let entries = DirectoryAttributes.read(fd) { return entries }
+        // The bulk call may already have advanced the directory offset.
+        let listing = openat(fd, ".", O_RDONLY | O_DIRECTORY)
+        guard listing >= 0 else { throw HeadroomError.message("Cannot reopen directory for inspection.") }
+        defer { close(listing) }
+        return try entries(listing).map { .init(name: $0) }
     }
     /// Names in an opened directory. The directory stream is closed before returning so deep trees hold one descriptor per level.
     static func entries(_ fd: Int32) throws -> [String] {

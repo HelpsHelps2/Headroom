@@ -43,12 +43,15 @@ struct IconButton: View {
 struct ScanButton: View {
     @Environment(AppModel.self) private var model
     @Environment(\.theme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let scanning = model.scanning
+        let animate = scanning && scenePhase == .active && !reduceMotion
         Button { Task { await model.scan() } } label: {
-            TimelineView(.animation(paused: !scanning)) { context in
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !animate)) { context in
                 Image(systemName: "arrow.clockwise").font(.sans(13, .medium))
-                    .rotationEffect(.degrees(scanning ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360 : 0))
+                    .rotationEffect(.degrees(animate ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360 : 0))
             }
             .frame(width: 24, height: 22).contentShape(Rectangle())
         }
@@ -102,27 +105,21 @@ struct Tabs: View {
 
 struct StatusPill: View {
     @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     var calm = false
-    @State private var breathing = false
     var body: some View {
         HStack(spacing: 7) {
             Circle().frame(width: 6, height: 6)
-                .scaleEffect(breathing ? 1.2 : 1).opacity(breathing ? 1 : 0.35)
             Text(text.uppercased()).font(.mono(10, .semibold)).tracking(0.8)
         }
         .foregroundStyle(calm ? theme.muted : theme.accent)
-        .onAppear {
-            guard !reduceMotion, !calm else { breathing = true; return }
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { breathing = true }
-        }
     }
 }
 
 /// The disk ring: everything else on disk, then the highlighted arc (stale output), then free space as bare track.
 struct DiskRing<Core: View>: View {
     @Environment(\.theme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var capacity: Int64
     var available: Int64
@@ -141,10 +138,11 @@ struct DiskRing<Core: View>: View {
         let other = max(usedAll - marked, 0)
         let gap = marked > 0 && other > 0 ? 0.012 : 0
         let radius = size * 104 / 250
+        let animate = active && scenePhase == .active && !reduceMotion
         ZStack {
             if ticks {
-                TimelineView(.animation(paused: !active || reduceMotion)) { context in
-                    let rotation = active && !reduceMotion ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: tickSpeed) / tickSpeed * 360 : 0
+                TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !animate)) { context in
+                    let rotation = animate ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: tickSpeed) / tickSpeed * 360 : 0
                     Circle()
                         .stroke(theme.track, style: StrokeStyle(lineWidth: size * 3 / 250, dash: [1.2, 6.4]))
                         .frame(width: radius * 2 + size * 34 / 250, height: radius * 2 + size * 34 / 250)
