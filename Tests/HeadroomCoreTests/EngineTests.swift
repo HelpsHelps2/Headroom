@@ -85,10 +85,12 @@ final class EngineTests: XCTestCase {
     }
     func testTaggedCargoOutputWithoutCompilerInfoCanBeCleaned() async throws {
         let f = try Fixture()
-        let engine = try Engine(directory: f.state, home: f.home.path)
+        let engine = try f.engine()
         try f.useCargoCacheTag()
         try await engine.save(f.preferences())
-        _ = try await engine.scan()
+        let inventory = try await engine.scan()
+        let artifact = try XCTUnwrap(inventory.artifacts.first)
+        XCTAssertTrue(artifact.eligible, artifact.reasons.joined(separator: "\n"))
         let plan = try await engine.plan(paths: [f.target.path])
         let result = try await engine.execute(plan)
         XCTAssertEqual(result.first?.outcome, "Cleaned", result.first?.detail ?? "")
